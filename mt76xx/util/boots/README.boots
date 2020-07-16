@@ -1,0 +1,25 @@
+How to using Boots tools
+1. Stop BT stack
+    # service call bluetooth_manager 8
+2. Launch boots_srv
+    # boots_srv &
+3. Launch boots with command, like reset
+    # boots -c reset
+
+
+Example:
+1.
+blanche:/ # service call bluetooth_manager 8
+Result: Parcel(00000000 00000001   '........')
+
+2.
+blanche:/ # boots_srv &
+[1] 8270
+blanche:/ # [boots_srv] client <-> Socket(4) <-> stpbt(1) <-> BT
+[boots_srv] Local relaying...
+
+3.
+blanche:/ # boots -c reset
+[boots] User(7) <-> Socket(4) <-> server
+        CMD: 03 0C 00
+        Event: 0E 04 01 03 0C 00 (HCI_RESET)
