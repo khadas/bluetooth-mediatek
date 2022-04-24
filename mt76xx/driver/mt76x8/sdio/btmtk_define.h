@@ -42,25 +42,33 @@
 #define BTMTK_LOG_LEVEL_DEBUG		4
 #define BTMTK_LOG_LEVEL_DEFAULT		BTMTK_LOG_LEVEL_INFO	/* default setting */
 
+#define BTMTK_MAX_LOG_LEN		64	/* default length setting */
+
 #define BTSDIO_INFO_RAW(p, l, fmt, ...)					\
-	do {								\
-		int raw_count = 0;					\
-		const unsigned char *ptr = p;				\
-		pr_info("[btmtk_info] "fmt, ##__VA_ARGS__);		\
-		for (raw_count = 0; raw_count <= l; ++raw_count)	\
-			pr_info(" %02X", ptr[raw_count]);		\
-		pr_info("\n");						\
-	} while (0)
+do {												\
+		int raw_count = 0;								\
+		char str[BTMTK_MAX_LOG_LEN * 3 + 1];						\
+		char *p_str = str;								\
+		const unsigned char *ptr = p;							\
+		for (raw_count = 0; raw_count < MIN(l, BTMTK_MAX_LOG_LEN); ++raw_count) 	\
+			p_str += sprintf(p_str, " %02X", ptr[raw_count]);			\
+		*p_str = '\0';									\
+		pr_info("[btmtk_info]"fmt"\n", ##__VA_ARGS__);					\
+		pr_info(" %s:%d - Length(%d): %s\n", __func__, __LINE__, (int)l, str);		\
+} while (0)
 
 #define BTSDIO_DEBUG_RAW(p, l, fmt, ...)				\
-	do {								\
-		int raw_count = 0;					\
-		const unsigned char *ptr = p;				\
-		pr_debug("[btmtk_info] "fmt, ##__VA_ARGS__);		\
-		for (raw_count = 0; raw_count <= l; ++raw_count)	\
-			pr_debug(" %02X", ptr[raw_count]);		\
-		pr_debug("\n");						\
-	} while (0)
+do {												\
+		int raw_count = 0;								\
+		char str[BTMTK_MAX_LOG_LEN * 3 + 1];						\
+		char *p_str = str;								\
+		const unsigned char *ptr = p;							\
+		for (raw_count = 0; raw_count < MIN(l, BTMTK_MAX_LOG_LEN); ++raw_count) 	\
+			p_str += sprintf(p_str, " %02X", ptr[raw_count]);			\
+		*p_str = '\0';									\
+		pr_debug("[btmtk_debug]"fmt"\n", ##__VA_ARGS__);				\
+		pr_debug(" %s:%d - Length(%d): %s\n", __func__, __LINE__, (int)l, str);		\
+} while (0)
 
 /**
  * HCI packet type
@@ -146,6 +154,7 @@ char *COREDUMP_FILE_NAME[] = {
 #define USB_IO_BUF_SIZE		(HCI_MAX_EVENT_SIZE > 256 ? HCI_MAX_EVENT_SIZE : 256)
 #define HCI_SNOOP_ENTRY_NUM	30
 #define HCI_SNOOP_BUF_SIZE	32
+#define FW_LOG_PKT		0xFF
 
 /**
  * stpbt device node

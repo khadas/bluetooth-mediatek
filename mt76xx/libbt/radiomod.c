@@ -106,30 +106,3 @@ exit:
     btinit_ctrl.worker_thread_running = FALSE;
     return NULL;
 }
-
-VOID *GORM_SCO_Init_Thread(VOID *ptr)
-{
-    INT32 i = 0;
-    HC_BT_HDR  *p_buf = NULL;
-    bt_vendor_op_result_t ret = BT_VND_OP_RESULT_FAIL;
-
-    LOG_DBG("SCO init thread starts\n");
-
-    pthread_mutexattr_init(&btinit_ctrl.attr);
-    pthread_mutexattr_settype(&btinit_ctrl.attr, PTHREAD_MUTEX_ERRORCHECK);
-    pthread_mutex_init(&btinit_ctrl.mutex, &btinit_ctrl.attr);
-    pthread_cond_init(&btinit_ctrl.cond, NULL);
-
-    ret = BT_VND_OP_RESULT_SUCCESS;
-
-    pthread_mutexattr_destroy(&btinit_ctrl.attr);
-    pthread_mutex_destroy(&btinit_ctrl.mutex);
-    pthread_cond_destroy(&btinit_ctrl.cond);
-
-    if (bt_vnd_cbacks) {
-        bt_vnd_cbacks->scocfg_cb(ret);
-    }
-
-    btinit_ctrl.worker_thread_running = FALSE;
-    return NULL;
-}

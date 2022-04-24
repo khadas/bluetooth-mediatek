@@ -230,7 +230,7 @@ static int boots_invoke_boots_srv(char *path)
     if (boots_system("pidof boots_srv > /dev/null") != 0) {
         if (boots_system(path) == 0) {
             BPRINT_I("Server(%s) executing...", path);
-            sleep(1);   // waiting boots_srv
+            (void)sleep(1);   // waiting boots_srv
         } else {
             BPRINT_E("***** WARNING: Please input # %s, if boots_srv isn't running *****",
                     path);

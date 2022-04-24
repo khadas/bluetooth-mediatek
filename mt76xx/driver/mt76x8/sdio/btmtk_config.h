@@ -64,11 +64,17 @@
  * WoBLE by BLE RC
  */
 #define SUPPORT_ANDROID 0 /*Linux build fail due to wake_lock, please set SUPPORT_ANDROID 0 for Linux*/
-#define SUPPORT_UNIFY_WOBLE 0
 #define SUPPORT_LEGACY_WOBLE 0
 #define BT_RC_VENDOR_DEFAULT 1
 #define BT_RC_VENDOR_S0 0
+
+#ifdef MTK_WOBLE_ENABLE
+#define SUPPORT_UNIFY_WOBLE 1
+#define SUPPORT_EINT 1
+#else
+#define SUPPORT_UNIFY_WOBLE 0
 #define SUPPORT_EINT 0
+#endif
 
 #if SUPPORT_EINT
 #define WAIT_POWERKEY_TIMEOUT 5000

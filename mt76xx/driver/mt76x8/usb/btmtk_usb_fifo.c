@@ -131,7 +131,7 @@ static u32 fifo_out_accessible(struct btmtk_fifo_data_t *data_p)
 	if (data_p == NULL)
 		return 0;
 
-	if (test_bit(TSK_SHOULD_STOP, &data_p->tsk_flag)) {
+	if (test_bit(FIFO_TSK_SHOULD_STOP, &data_p->tsk_flag)) {
 		BTUSB_WARN("%s: task should stop", __func__);
 		return 1;
 	}
@@ -313,10 +313,10 @@ static int btmtk_fifo_thread(void *ptr)
 		return -1;
 	}
 
-	while (!kthread_should_stop() || test_bit(TSK_START, &data_p->tsk_flag)) {
+	while (!kthread_should_stop() || test_bit(FIFO_TSK_START, &data_p->tsk_flag)) {
 		wait_event_interruptible(data_p->rx_wait_q,
 					 fifo_out_accessible(data_p));
-		if (test_bit(TSK_SHOULD_STOP, &data_p->tsk_flag))
+		if (test_bit(FIFO_TSK_SHOULD_STOP, &data_p->tsk_flag))
 			break;
 
 		fifo_out_info(data_p);
@@ -324,7 +324,7 @@ static int btmtk_fifo_thread(void *ptr)
 		fifo_out_info(data_p);
 	}
 
-	set_bit(TSK_EXIT, &data_p->tsk_flag);
+	set_bit(FIFO_TSK_EXIT, &data_p->tsk_flag);
 	BTUSB_INFO("%s: end: down != 0", __func__);
 
 	return 0;
@@ -339,12 +339,12 @@ void *btmtk_fifo_init(void)
 	UNUSED(btmtk_usb_table);	/* clear warning */
 	data_p->fifo_l = btmtk_fifo_list;
 
-	while (test_bit(TSK_INIT, &data_p->tsk_flag)) {
-		clear_bit(TSK_INIT, &data_p->tsk_flag);
-		if (test_bit(TSK_EXIT, &data_p->tsk_flag))
+	while (test_bit(FIFO_TSK_INIT, &data_p->tsk_flag)) {
+		clear_bit(FIFO_TSK_INIT, &data_p->tsk_flag);
+		if (test_bit(FIFO_TSK_EXIT, &data_p->tsk_flag))
 			break;
 
-		set_bit(TSK_SHOULD_STOP, &data_p->tsk_flag);
+		set_bit(FIFO_TSK_SHOULD_STOP, &data_p->tsk_flag);
 		wake_up_process(data_p->fifo_tsk);
 		msleep(100);
 	}
@@ -363,7 +363,7 @@ void *btmtk_fifo_init(void)
 	}
 
 	init_waitqueue_head(&data_p->rx_wait_q);
-	set_bit(TSK_INIT, &data_p->tsk_flag);
+	set_bit(FIFO_TSK_INIT, &data_p->tsk_flag);
 
 	return (void *)(data_p);
 }
@@ -382,7 +382,7 @@ u32 btmtk_fifo_in(unsigned int type, void *fifo_d, const void *buf,
 		return len;
 	}
 
-	if (!test_bit(TSK_START, &data_p->tsk_flag)) {
+	if (!test_bit(FIFO_TSK_START, &data_p->tsk_flag)) {
 		BTUSB_ERR("%s: Fail task not start", __func__);
 		return 0;
 	}
@@ -419,7 +419,7 @@ int btmtk_fifo_start(void *fio_d)
 		return -1;
 	}
 
-	if (!test_bit(TSK_INIT, &data_p->tsk_flag)) {
+	if (!test_bit(FIFO_TSK_INIT, &data_p->tsk_flag)) {
 		BTUSB_ERR("%s: [fail task not init ]", __func__);
 		return -1;
 	}
@@ -436,8 +436,8 @@ int btmtk_fifo_start(void *fio_d)
 		return -1;
 	}
 
-	set_bit(TSK_START, &data_p->tsk_flag);
-	BTUSB_INFO("%s: set TSK_START", __func__);
+	set_bit(FIFO_TSK_START, &data_p->tsk_flag);
+	BTUSB_INFO("%s: set FIFO_TSK_START", __func__);
 	wake_up_process(data_p->fifo_tsk);
 	BTUSB_INFO("%s: [ok]", __func__);
 

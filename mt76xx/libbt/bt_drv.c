@@ -91,7 +91,7 @@ int mtk_bt_op(bt_vendor_opcode_t opcode, void *param)
 
     case BT_VND_OP_SCO_CFG:
         LOG_DBG("BT_VND_OP_SCO_CFG\n");
-        ret = mtk_sco_cfg();
+        /* Do NOTHING on combo chip */
         break;
 
     case BT_VND_OP_GET_LPM_IDLE_TIMEOUT:

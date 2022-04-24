@@ -53,8 +53,8 @@
  *    Revision is for bugfix.
  *  REV: For branch
  */
-#define VERSION                 "1.21.2"
-#define REV                     "amz.200507"
+#define VERSION                 "1.21.3"
+#define REV                     "amz.201201"
 
 #if HELP_COLOR_SUPPORT
 #define NONE "\033[m"

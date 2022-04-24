@@ -56,6 +56,9 @@ extern u8 btmtk_log_lvl;
 #define BTMTK_DBG(fmt, ...)     \
 	do {if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_DEBUG)		\
 		pr_warn("[btmtk_debug] %s: "fmt"\n", __func__, ##__VA_ARGS__); } while (0)
+#define BTMTK_WARN_LIMITTED(fmt, ...)     \
+	do {printk_ratelimited(KERN_WARNING     \
+		"[btmtk_warn_limit] %s: "fmt"\n", __func__, ##__VA_ARGS__); } while (0)
 
 #define BTMTK_MAX_LOG_LEN		64	/* default length setting */
 
@@ -99,7 +102,7 @@ do {												\
 #define MTK_HCI_ACL_HEADER_LEN	(5)
 #define MTK_HCI_SCO_HEADER_LEN	(4)
 
-#define PRINT_DUMP_COUNT		20
+#define PRINT_DUMP_COUNT		100
 
 /**
  * SYS control
@@ -162,6 +165,7 @@ do {												\
 #define HCI_SNOOP_ENTRY_NUM	30
 #define HCI_SNOOP_BUF_SIZE	32
 #define FW_LOG_PKT		0xFF
+#define EVT_CMPL_LEN	1
 
 /**
  * stpbt device node

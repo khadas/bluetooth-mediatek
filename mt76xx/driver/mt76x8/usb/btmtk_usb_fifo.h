@@ -24,11 +24,11 @@ enum {
 };
 
 enum {
-	TSK_INIT = 0,
-	TSK_START,
-	TSK_RUNNING,
-	TSK_SHOULD_STOP,
-	TSK_EXIT,
+	FIFO_TSK_INIT = 0,
+	FIFO_TSK_START,
+	FIFO_TSK_RUNNING,
+	FIFO_TSK_SHOULD_STOP,
+	FIFO_TSK_EXIT,
 };
 
 struct btfio_stats {

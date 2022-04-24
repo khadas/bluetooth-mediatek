@@ -7,17 +7,15 @@
  *
  *  This program is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *  See http://www.gnu.org/licenses/gpl-2.0.html for more details.
  */
 #ifndef __BTMTK_USB_MAIN_H__
 #define __BTMTK_USB_MAIN_H__
 
 #include <net/bluetooth/bluetooth.h>
 #include "btmtk_define.h"
-#if SUPPORT_UNIFY_WOBLE
 #include <linux/pm_wakeup.h>
-#endif
 
 #define BD_ADDRESS_SIZE 6
 
@@ -33,16 +31,20 @@
 #define PATCH_READY 1
 #define PATCH_NEED_DOWNLOAD 2
 
+
+#define ROM_PATCH_FINISH 2
+
 enum {
-	HW_ERR_NONE = 0,
-	HW_ERR_CODE_CHIP_RESET = 1,
-	HW_ERR_CODE_LEGACY_WOBLE = 2,
-	HW_ERR_CODE_USB_DISC = 3,
-	HW_ERR_CODE_CORE_DUMP = 4,
-	HW_ERR_CODE_POWER_ON = 5,
-	HW_ERR_CODE_POWER_OFF = 6,
-	HW_ERR_CODE_WOBLE = 7,
-	HW_ERR_CODE_SET_SLEEP_CMD = 8,
+	HW_ERR_NONE = 0x00,
+	HW_ERR_CODE_CHIP_RESET = 0xF0,
+	HW_ERR_CODE_LEGACY_WOBLE = 0xF1,
+	HW_ERR_CODE_USB_DISC = 0xF2,
+	HW_ERR_CODE_CORE_DUMP = 0xF3,
+	HW_ERR_CODE_POWER_ON = 0xF4,
+	HW_ERR_CODE_POWER_OFF = 0xF5,
+	HW_ERR_CODE_WOBLE = 0xF6,
+	HW_ERR_CODE_SET_SLEEP_CMD = 0xF7,
+	HW_ERR_CODE_RESET_STACK_AFTER_WOBLE = 0xF8,
 };
 
 /* Please keep sync with btmtk_usb_set_state function */
@@ -63,6 +65,7 @@ enum {
 	BTMTK_USB_STATE_RESUME_DISCONNECT,
 	BTMTK_USB_STATE_RESUME_PROBE,
 	BTMTK_USB_STATE_RESUME_FW_DUMP,
+	BTMTK_USB_STATE_STANDBY,
 };
 
 /* Please keep sync with btmtk_fops_set_state function */
@@ -86,7 +89,13 @@ struct ring_buffer_struct {
 	unsigned int			write_p;			/* indicate the current write index */
 };
 
-struct woble_setting_struct {
+enum fw_cfg_index_len {
+	FW_CFG_INX_LEN_NONE = 0,
+	FW_CFG_INX_LEN_2 = 2,
+	FW_CFG_INX_LEN_3 = 3,
+};
+
+struct fw_cfg_struct {
 	char	*content;	/* APCF content or radio off content */
 	int	length;		/* APCF content or radio off content of length */
 };
@@ -99,6 +108,37 @@ struct woble_ir_km_char_s {
 struct woble_ir_km_value_s {
 	unsigned char nec[4];
 	unsigned char rc5[4];
+};
+
+struct bt_cfg_struct {
+	bool	support_unify_woble;	/* support unify woble or not */
+	bool	support_legacy_woble;		/* support legacy woble or not */
+	bool	support_woble_by_eint;		/* support woble by eint or not */
+	bool	support_dongle_reset;		/* support chip reset or not */
+	bool	support_full_fw_dump;		/* dump full fw coredump or not */
+	bool	support_woble_wakelock;		/* support when woble error, do wakelock or not */
+	bool	support_woble_for_bt_disable;		/* when bt disable, support enter susend or not */
+	bool	reset_stack_after_woble;	/* support reset stack to re-connect IOT after resume */
+	bool	support_auto_picus;			/* support enable PICUS automatically */
+	bool	support_send_vsc_cmd;		/* support vsc cmd automatically */
+	struct fw_cfg_struct picus_filter;	/* support on PICUS filter command customization */
+	int	dongle_reset_gpio_pin;		/* BT_DONGLE_RESET_GPIO_PIN number */
+	unsigned int	unify_woble_type;	/* 0: legacy. 1: waveform. 2: IR */
+	char	*sys_log_file_name;
+	char	*fw_dump_file_name;
+	struct fw_cfg_struct wmt_cmd[WMT_CMD_COUNT];
+	struct fw_cfg_struct vendor_cmd[VENDOR_CMD_COUNT];
+};
+
+enum {
+	LOAD_PATCH_URB,
+	RX_INTR_URB,
+	RX_BULK_URB,
+	RX_ISOC_URB,
+	TX_ACL_URB,
+	TX_SCO_URB,
+
+	URB_NUM
 };
 
 struct btmtk_usb_data {
@@ -115,6 +155,7 @@ struct btmtk_usb_data {
 	struct usb_anchor	bulk_out_anchor;/* bulk out */
 	struct usb_anchor	isoc_in_anchor;	/* isoc in */
 	struct usb_anchor	isoc_out_anchor;/* isoc out */
+	struct urb 		*urb[URB_NUM];
 	int			meta_tx;
 	spinlock_t		txlock;
 
@@ -142,36 +183,39 @@ struct btmtk_usb_data {
 	unsigned int		rom_patch_offset;
 	unsigned int		rom_patch_len;
 
+	unsigned char		*setting_file;
 	unsigned char		*woble_setting_file_name;
 	unsigned int		woble_setting_len;
 
-	struct woble_setting_struct		woble_setting_apcf[WOBLE_SETTING_COUNT];
-	struct woble_setting_struct		woble_setting_apcf_fill_mac[WOBLE_SETTING_COUNT];
-	struct woble_setting_struct		woble_setting_apcf_fill_mac_location[WOBLE_SETTING_COUNT];
+	struct fw_cfg_struct		woble_setting_apcf[WOBLE_SETTING_COUNT];
+	struct fw_cfg_struct		woble_setting_apcf_fill_mac[WOBLE_SETTING_COUNT];
+	struct fw_cfg_struct		woble_setting_apcf_fill_mac_location[WOBLE_SETTING_COUNT];
 
-	struct woble_setting_struct		woble_setting_radio_off[WOBLE_SETTING_COUNT];
-	struct woble_setting_struct		woble_setting_radio_off_status_event[WOBLE_SETTING_COUNT];
+	struct fw_cfg_struct		woble_setting_radio_off;
+	struct fw_cfg_struct		woble_setting_wakeup_type;
+	struct fw_cfg_struct		woble_setting_radio_off_status_event;
 	/* complete event */
-	struct woble_setting_struct		woble_setting_radio_off_comp_event[WOBLE_SETTING_COUNT];
+	struct fw_cfg_struct		woble_setting_radio_off_comp_event;
 
-	struct woble_setting_struct		woble_setting_radio_on[WOBLE_SETTING_COUNT];
-	struct woble_setting_struct		woble_setting_radio_on_status_event[WOBLE_SETTING_COUNT];
-	struct woble_setting_struct		woble_setting_radio_on_comp_event[WOBLE_SETTING_COUNT];
+	struct fw_cfg_struct		woble_setting_radio_on;
+	struct fw_cfg_struct		woble_setting_radio_on_status_event;
+	struct fw_cfg_struct		woble_setting_radio_on_comp_event;
 
 	/* set apcf after resume(radio on) */
-	struct woble_setting_struct		woble_setting_apcf_resume[WOBLE_SETTING_COUNT];
+	struct fw_cfg_struct		woble_setting_apcf_resume[WOBLE_SETTING_COUNT];
 	unsigned char				bdaddr[BD_ADDRESS_SIZE];
 	unsigned int				woble_need_trigger_coredump;
-#if SUPPORT_UNIFY_WOBLE
-	struct wakeup_source			woble_wlock;
-#endif
+	struct		wakeup_source	*woble_ws;
 	unsigned int				woble_need_set_radio_off_in_probe;
+	unsigned char		*bt_cfg_file_name;
+	struct bt_cfg_struct	bt_cfg;
 
 	unsigned char		*i_buf;
 	unsigned char		*o_buf;
 	char			*i_fwlog_buf;
 	unsigned char		*o_fwlog_buf;
 	unsigned char		*o_sco_buf;
+	unsigned char		*o_usb_buf;
 
 	struct ring_buffer_struct
 				*metabuffer;
@@ -181,14 +225,17 @@ struct btmtk_usb_data {
 	unsigned char		isoc_urb_submitted;
 	atomic_t		isoc_out_count;
 
-	void			*bt_fifo;
-#if SUPPORT_MT7668
+#if SUPPORT_MT7668 || SUPPORT_MT7663
 	unsigned char		is_mt7668_dongle_state;
 #endif
 	struct sk_buff_head	fwlog_queue;
 	spinlock_t		fwlog_lock;
 	struct sk_buff_head	isoc_in_queue;
 	spinlock_t		isoc_lock;
+	unsigned char		isoc_alt_setting;
+	unsigned char		reset_dongle;
+	unsigned char		reset_progress;
+	struct timer_list	chip_rst_disc_timer;
 };
 
 struct le_scan_parm_s {
@@ -206,11 +253,15 @@ struct le_scan_parm_s {
  */
 static inline int is_support_unify_woble(struct btmtk_usb_data *data)
 {
-#if SUPPORT_UNIFY_WOBLE
-	return ((data->chip_id & 0xffff) == 0x7668);
-#else
-	return 0;
-#endif
+	if (data->bt_cfg.support_unify_woble) {
+		if (((data->chip_id & 0xffff) == 0x7668) ||
+			((data->chip_id & 0xffff) == 0x7663))
+			return 1;
+		else
+			return 0;
+	} else {
+		return 0;
+	}
 }
 
 #if SUPPORT_MT7662
@@ -234,7 +285,9 @@ static inline int is_mt7668(struct btmtk_usb_data *data)
 {
 	return ((data->chip_id & 0xffff) == 0x7668);
 }
+#endif
 
+#if SUPPORT_MT7668 || SUPPORT_MT7663
 enum {
 	BTMTK_USB_7668_DONGLE_STATE_UNKNOWN,
 	BTMTK_USB_7668_DONGLE_STATE_POWERING_ON,
@@ -246,6 +299,14 @@ enum {
 };
 #endif
 
+#if SUPPORT_MT7663
+static inline int is_mt7663(struct btmtk_usb_data *data)
+{
+	return ((data->chip_id & 0xffff) == 0x7663);
+}
+#endif
+
+
 /**
  * Extern functions
  */
@@ -253,5 +314,6 @@ int btmtk_usb_send_data(const unsigned char *buffer, const unsigned int length);
 int btmtk_usb_meta_send_data(const unsigned char *buffer,
 		const unsigned int length);
 void btmtk_usb_toggle_rst_pin(void);
-
+struct btmtk_usb_data *btmtk_usb_get_data(void);
+void btmtk_do_gettimeofday(struct timeval *tv);
 #endif /* __BTMTK_USB_MAIN_H__ */

@@ -7,8 +7,8 @@
  *
  *  This program is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *  See http://www.gnu.org/licenses/gpl-2.0.html for more details.
  */
 #ifndef __BTMTK_DEFINE_H__
 #define __BTMTK_DEFINE_H__
@@ -45,13 +45,20 @@
 extern u8 btmtk_log_lvl;
 
 #define BTUSB_ERR(fmt, ...)	 \
-	do { if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_ERROR) pr_warn_ratelimited("[btmtk_err] "fmt"\n", ##__VA_ARGS__); } while (0)
+	do { if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_ERROR) pr_warn("[btmtk_err] "fmt"\n", ##__VA_ARGS__); } while (0)
 #define BTUSB_WARN(fmt, ...)	\
-	do { if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_WARNING) pr_warn_ratelimited("[btmtk_warn] "fmt"\n", ##__VA_ARGS__); } while (0)
+	do { if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_WARNING) pr_warn("[btmtk_warn] "fmt"\n", ##__VA_ARGS__); } while (0)
 #define BTUSB_INFO(fmt, ...)	\
-	do { if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_INFO) pr_warn_ratelimited("[btmtk_info] "fmt"\n", ##__VA_ARGS__); } while (0)
+	do { if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_INFO) pr_warn("[btmtk_info] "fmt"\n", ##__VA_ARGS__); } while (0)
 #define BTUSB_DBG(fmt, ...)	 \
-	do { if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_DEBUG) pr_warn_ratelimited("[btmtk_debug] "fmt"\n", ##__VA_ARGS__); } while (0)
+	do { if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_DEBUG) pr_warn("[btmtk_debug] "fmt"\n", ##__VA_ARGS__); } while (0)
+
+#define BTUSB_WARN_LIMITTED(fmt, ...)     \
+		do {												\
+			if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_WARNING)	\
+				printk_ratelimited(KERN_WARNING "[btmtk_warn_limit] %s: "fmt"\n",	\
+					__func__, ##__VA_ARGS__);	\
+		} while (0)
 
 #define BTUSB_INFO_RAW(p, l, fmt, ...)							\
 		do {									\
@@ -80,27 +87,6 @@ extern u8 btmtk_log_lvl;
 	} while (0)
 
 /**
- * Log file path & name, the default path is /sdcard
- */
-#define SYSLOG_FNAME			"bt_sys_log"
-#define FWDUMP_FNAME			"bt_fw_dump"
-#ifdef BTMTK_LOG_PATH
-	#define SYS_LOG_FILE_NAME	(BTMTK_LOG_PATH SYSLOG_FNAME)
-	#define FW_DUMP_FILE_NAME	(BTMTK_LOG_PATH FWDUMP_FNAME)
-#else
-	#define SYS_LOG_FILE_NAME	"/sdcard/"SYSLOG_FNAME
-	#define FW_DUMP_FILE_NAME	"/sdcard/"FWDUMP_FNAME
-#endif /* FW_DUMP_FILE_NAME */
-
-/**
- * Monitor Chip reset
- */
-#define RESET_BT	"RESET_BT\n"		/* echo RESET_BT > /dev/stpbtfwlog */
-#define RESET_BT_DONE	"RESET_BT_DONE\n"	/* Return this if reset successful in 5 sec */
-#define RESET_BT_TIMO	"RESET_BT_TIMO\n"	/* Return this if reset failed in 5 sec */
-#define RESET_TIMO	8			/* Timeout/seconds */
-
-/**
  * SYS control
  */
 #define SYSCTL	0x400000
@@ -124,23 +110,23 @@ extern u8 btmtk_log_lvl;
 /**
  * Timeout setting, mescs
  */
-#ifdef USB_IO_TIMO
-	#define USB_CTRL_IO_TIMO	USB_IO_TIMO
-#else
-	#define USB_CTRL_IO_TIMO	100
-#endif
-#ifdef WAIT_EVENT_TIMO
-	#define USB_INTR_MSG_TIMO	WAIT_EVENT_TIMO
-#else
-	#define USB_INTR_MSG_TIMO	2000
-#endif
+#define USB_CTRL_IO_TIMO	300
+#define USB_INTR_MSG_TIMO	2000
 
-#ifdef WOBLE_MULTI_EVENT_INT_TIMO
-	#define WOBLE_EVENT_INTERVAL_TIMO	WOBLE_MULTI_EVENT_INT_TIMO
-#else
-	#define WOBLE_EVENT_INTERVAL_TIMO	500
-#endif
+#define WOBLE_EVENT_INTERVAL_TIMO	500
 #define WOBLE_COMP_EVENT_TIMO		5000
+#define DUMP_WAIT_TIMO_CNT	60
+#define WAIT_WLAN_REMOVE_TIMO_CNT	30
+
+/**
+ * Monitor Chip reset
+ */
+#define RESET_BT	"RESET_BT\n"		/* echo RESET_BT > /dev/stpbtfwlog */
+#define RESET_BT_DONE	"RESET_BT_DONE\n"	/* Return this if reset successful in
+5 sec */
+#define RESET_BT_TIMO	"RESET_BT_TIMO\n"	/* Return this if reset failed in 5
+sec */
+#define RESET_TIMO	8			/* Timeout/seconds */
 
 /**
  * For chip reset pin
@@ -177,14 +163,9 @@ extern u8 btmtk_log_lvl;
 
 #define META_BUFFER_SIZE	(1024 * 500)
 #define USB_IO_BUF_SIZE		(HCI_MAX_EVENT_SIZE > 256 ? HCI_MAX_EVENT_SIZE : 256)
-#ifndef HCI_SNOOP_ENTRY_NUM
 #define HCI_SNOOP_ENTRY_NUM	30
-#endif
 #define HCI_SNOOP_BUF_SIZE	32
-#define FW_VERSION_SIZE		15 /* 14 bytes for FW version + 1 byte for end */
-#define FW_VERSION_BUF_SIZE	32
-
-#define FW_QUEUE_FULL_ERR_MAX_TIMES	100
+#define FW_VERSION_BUF_SIZE	14
 
 /**
  * stpbtfwlog device node
@@ -216,9 +197,9 @@ extern u8 btmtk_log_lvl;
 /**
  * fw log queue count
  */
-#define FWLOG_QUEUE_COUNT			200
-#define FWLOG_BLUETOOTH_KPI_QUEUE_COUNT		200
-#define FWLOG_ASSERT_QUEUE_COUNT		6000
+#define FWLOG_QUEUE_COUNT		200
+#define FWLOG_BLUETOOTH_KPI_QUEUE_COUNT	200
+#define FWLOG_ASSERT_QUEUE_COUNT	6000
 
 /**
  * Maximum rom patch file name length
@@ -226,17 +207,21 @@ extern u8 btmtk_log_lvl;
 #define MAX_BIN_FILE_NAME_LEN 32
 
 /**
- * GPIO PIN configureation
+ * Wlan status define
  */
-#ifndef BT_DONGLE_RESET_GPIO_PIN
-	#define BT_DONGLE_RESET_GPIO_PIN	220
-#endif /* BT_DONGLE_RESET_GPIO_PIN */
+#define WLAN_STATUS_IS_NOT_LOAD		-1
+#define WLAN_STATUS_DEFAULT		0
+#define WLAN_STATUS_CALL_REMOVE_START	1 /* WIFI driver is inserted */
+
+/**
+ * L0 reset
+ */
+#define L0_RESET_TAG				"[SER][L0] "
 
 /**
  * WoBLE by BLE RC
  */
 #ifndef SUPPORT_LEGACY_WOBLE
-	#define SUPPORT_LEGACY_WOBLE 0
 	#define BT_RC_VENDOR_DEFAULT 1
 	#define BT_RC_VENDOR_S0 0
 #endif
@@ -248,18 +233,54 @@ extern u8 btmtk_log_lvl;
 	#define BT_DISABLE_RESET_RESUME 0
 #endif
 
+#if SUPPORT_MT7668
+#define WOBLE_SETTING_FILE_NAME_7668 "woble_setting_7668.bin"
+#endif
+
+#if SUPPORT_MT7663
+#define WOBLE_SETTING_FILE_NAME_7663 "woble_setting_7663.bin"
+#endif
+
+/* Backward compatibility */
 #define WOBLE_SETTING_FILE_NAME "woble_setting.bin"
-#define IR_PROTOCOL		"IR_PROTO"
-#define IR_KEYMAP_G		"IR_KEYMAP_GROUP"
-#define IR_KEYMAP		"IR_KEYMAP"
-#define MAX_IRKMG		20 /* Max IR keymap group, MUST sync with FW */
+#define BT_CFG_NAME "bt.cfg"
+#define BT_CFG_NAME_PREFIX "bt"
+#define BT_CFG_NAME_SUFFIX "cfg"
+#define BT_UNIFY_WOBLE "SUPPORT_UNIFY_WOBLE"
+#define BT_UNIFY_WOBLE_TYPE "UNIFY_WOBLE_TYPE"
+#define BT_LEGACY_WOBLE "SUPPORT_LEGACY_WOBLE"
+#define BT_WOBLE_BY_EINT "SUPPORT_WOBLE_BY_EINT"
+#define BT_DONGLE_RESET_PIN "BT_DONGLE_RESET_GPIO_PIN"
+#define BT_SYS_LOG_FILE "SYS_LOG_FILE_NAME"
+#define BT_FW_DUMP_FILE "FW_DUMP_FILE_NAME"
+#define BT_RESET_DONGLE "SUPPORT_DONGLE_RESET"
+#define BT_FULL_FW_DUMP "SUPPORT_FULL_FW_DUMP"
+#define BT_WOBLE_WAKELOCK "SUPPORT_WOBLE_WAKELOCK"
+#define BT_WOBLE_FOR_BT_DISABLE "SUPPORT_WOBLE_FOR_BT_DISABLE"
+#define BT_RESET_STACK_AFTER_WOBLE "RESET_STACK_AFTER_WOBLE"
+#define BT_AUTO_PICUS "SUPPORT_AUTO_PICUS"
+#define BT_SEND_VSC_CMD "SUPPORT_SEND_VSC_CMD"
+#define BT_AUTO_PICUS_FILTER "PICUS_FILTER_CMD"
+#define BT_WMT_CMD "WMT_CMD"
+#define BT_VENDOR_CMD "VENDOR_CMD"
+
+#define WOBX_TYPE_IR                0x11    /* radio cmd, attr type */
+#define WOBX_TYPE_KEYCODE_MAPPING   0x47    /* radio cmd, attr type */
+#define IR_PROTOCOL "IR_PROTO"
+#define IR_KEYMAP_G "IR_KEYMAP_GROUP"
+#define IR_KEYMAP "IR_KEYMAP"
+#define MAX_IRKMG 20
+#define WMT_CMD_COUNT 255
+#define VENDOR_CMD_COUNT 255
 #define WOBLE_SETTING_COUNT 10
 
 #define WOBLE_FAIL -10
 
-#define WOBX_TYPE_IR			0x11	/* radio cmd, attr type */
-#define WOBX_TYPE_KEYCODE_MAPPING	0x47	/* radio cmd, attr type */
+#define COMMAND_TIMED_OUT_ERROR_CODE (-110)
 
-#define PRINT_DUMP_PACKET_COUNT 20
+#define PM_KEY_BTW (0x0015) /* Notify PM the unify woble type */
+
+#define BTMTK_RESET_DOING 1
+#define BTMTK_RESET_DONE 0
 
 #endif /* __BTMTK_DEFINE_H__ */

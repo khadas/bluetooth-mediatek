@@ -63,7 +63,6 @@ extern BOOL BT_InitDevice(
     SETUP_UART_PARAM_T setup_uart_param
 );
 
-extern BOOL BT_InitSCO(VOID);
 extern BOOL BT_DeinitDevice(VOID);
 extern VOID BT_Cleanup(VOID);
 
@@ -85,13 +84,26 @@ void clean_callbacks(void)
 /* Initialize UART port */
 int init_uart(void)
 {
+    int retry = 50;
     LOG_TRC();
     if (bt_fd >= 0) {
         LOG_WAN("Previous serial port is not closed\n");
         close_uart();
     }
 
-    bt_fd = open("/dev/stpbt", O_RDWR | O_NOCTTY | O_NONBLOCK);
+    while(1) {
+        bt_fd = open("/dev/stpbt", O_RDWR | O_NOCTTY | O_NONBLOCK);
+        if (bt_fd < 0) {
+            LOG_ERR("Can't open serial port, Retry\n");
+            usleep(200000);/*200ms*/
+            if (retry <= 0)
+                break;
+
+              retry--;
+        } else
+            break;
+    }
+
     if (bt_fd < 0) {
         LOG_ERR("Can't open serial port!!!");
         return -1;
@@ -266,12 +278,6 @@ int mtk_fw_cfg(uint8_t *bdaddr)
               speed,
               flow_control,
               uart_setup_callback) == TRUE ? 0 : -1);
-}
-
-/* MTK specific SCO/PCM configuration */
-int mtk_sco_cfg(void)
-{
-    return (BT_InitSCO() == TRUE ? 0 : -1);
 }
 
 /* MTK specific deinitialize process */

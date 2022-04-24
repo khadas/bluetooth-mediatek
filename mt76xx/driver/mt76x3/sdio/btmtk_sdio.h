@@ -16,7 +16,7 @@
 #include "btmtk_config.h"
 #include <linux/pm_wakeup.h>
 
-#define VERSION "v0.0.1.13_2020070601"
+#define VERSION "v0.0.1.13_2022012401"
 
 #define SDIO_HEADER_LEN				4
 #define STP_HEADER_LEN				4
@@ -74,11 +74,15 @@
 
 #define FIRMWARE_READY                          0xfedc
 
-#define BTMTK_INIT 0
-#define BTMTK_OPENING 1
-#define BTMTK_OPENED 2
-#define BTMTK_CLOSING 3
-#define BTMTK_CLOSED 4
+enum {
+	BTMTK_FOPS_STATE_UNKNOWN,	/* deinit in stpbt destroy */
+	BTMTK_FOPS_STATE_INIT,		/* init in stpbt created */
+	BTMTK_FOPS_STATE_OPENING,	/* during opening */
+	BTMTK_FOPS_STATE_OPENED,	/* opened */
+	BTMTK_FOPS_STATE_CLOSING,	/* during closing */
+	BTMTK_FOPS_STATE_CLOSED,	/* closed */
+	BTMTK_FOPS_STATE_MAX
+};
 
 struct btmtk_sdio_card_reg {
 	u8 cfg;
@@ -171,7 +175,7 @@ struct bt_cfg_struct {
 	bool	support_full_fw_dump;		/* dump full fw coredump or not */
 	bool	support_woble_wakelock;		/* support when woble error, do wakelock or not */
 	bool	support_woble_for_bt_disable;		/* when bt disable, support enter susend or not */
-	unsigned int	dongle_reset_gpio_pin;		/* BT_DONGLE_RESET_GPIO_PIN number */
+	int		dongle_reset_gpio_pin;		/* BT_DONGLE_RESET_GPIO_PIN number */
 	char	*sys_log_file_name;
 	char	*fw_dump_file_name;
 	bool	support_auto_picus;		/* support enable PICUS automatically */
@@ -235,7 +239,10 @@ struct btmtk_sdio_card {
 	u8 *bin_file_buffer;
 	size_t bin_file_size;
 	u8 efuse_mode;
-	bool keep_picus;
+
+	struct	sk_buff_head tx_queue;
+	struct	sk_buff_head fops_queue;
+	struct	sk_buff_head fwlog_fops_queue;
 
 	enum bt_sdio_dongle_state dongle_state;
 };

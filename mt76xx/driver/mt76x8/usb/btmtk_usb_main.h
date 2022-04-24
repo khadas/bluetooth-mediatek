@@ -19,6 +19,9 @@
 #include <linux/pm_wakeup.h>
 #endif
 
+#include <linux/timer.h>
+
+
 #define BD_ADDRESS_SIZE 6
 
 /* 0:
@@ -163,7 +166,7 @@ struct btmtk_usb_data {
 	unsigned char				bdaddr[BD_ADDRESS_SIZE];
 	unsigned int				woble_need_trigger_coredump;
 #if SUPPORT_UNIFY_WOBLE
-	struct wakeup_source			woble_wlock;
+	struct wakeup_source		*woble_wlock;
 #endif
 	unsigned int				woble_need_set_radio_off_in_probe;
 
@@ -172,6 +175,7 @@ struct btmtk_usb_data {
 	char			*i_fwlog_buf;
 	unsigned char		*o_fwlog_buf;
 	unsigned char		*o_sco_buf;
+	unsigned char		*o_usb_buf;
 
 	struct ring_buffer_struct
 				*metabuffer;
@@ -189,6 +193,9 @@ struct btmtk_usb_data {
 	spinlock_t		fwlog_lock;
 	struct sk_buff_head	isoc_in_queue;
 	spinlock_t		isoc_lock;
+
+	struct timer_list	fw_dump_timer;
+	struct timer_list	chip_rst_disc_timer;
 };
 
 struct le_scan_parm_s {
@@ -253,5 +260,4 @@ int btmtk_usb_send_data(const unsigned char *buffer, const unsigned int length);
 int btmtk_usb_meta_send_data(const unsigned char *buffer,
 		const unsigned int length);
 void btmtk_usb_toggle_rst_pin(void);
-
 #endif /* __BTMTK_USB_MAIN_H__ */

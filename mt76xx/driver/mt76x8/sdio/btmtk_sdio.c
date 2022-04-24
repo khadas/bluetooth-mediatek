@@ -45,6 +45,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/input.h>
 #endif
 
 #ifdef CONFIG_AMAZON_A2DP_TS_SDIO
@@ -88,6 +89,7 @@ static void btmtk_proc_create_new_entry(void);
 #if SUPPORT_EINT
 static int btmtk_sdio_RegisterBTIrq(struct btmtk_sdio_card *data);
 static int btmtk_sdio_woble_input_init(struct btmtk_sdio_card *data);
+static void btmtk_sdio_woble_input_deinit(struct btmtk_sdio_card *data);
 #endif
 
 static char fw_dump_file_name[FW_DUMP_FILE_NAME_SIZE] = {0};
@@ -100,7 +102,10 @@ static char event_compare_status;
 /* timer for coredump end */
 struct task_struct	*wait_dump_complete_tsk;
 struct task_struct	*wait_wlan_remove_tsk;
+struct task_struct	*wait_wlan_rst_done_task;
 int wlan_status;
+
+static unsigned int whole_chip_rst_ready = COREDUMP_END;
 
 int fw_is_doing_coredump;
 int fw_is_coredump_end_packet;
@@ -264,6 +269,27 @@ static const struct btmtk_sdio_device btmtk_sdio_7666 = {
 	.supports_fw_dump = false,
 };
 
+static u8 hci_cmd_snoop_buf[HCI_SNOOP_ENTRY_NUM][HCI_SNOOP_BUF_SIZE];
+static u8 hci_cmd_snoop_len[HCI_SNOOP_ENTRY_NUM];
+static unsigned int hci_cmd_snoop_timestamp[HCI_SNOOP_ENTRY_NUM];
+
+static u8 hci_event_snoop_buf[HCI_SNOOP_ENTRY_NUM][HCI_SNOOP_BUF_SIZE];
+static u8 hci_event_snoop_len[HCI_SNOOP_ENTRY_NUM];
+static unsigned int hci_event_snoop_timestamp[HCI_SNOOP_ENTRY_NUM];
+
+static u8 hci_acl_snoop_buf[HCI_SNOOP_ENTRY_NUM][HCI_SNOOP_BUF_SIZE];
+static u8 hci_acl_snoop_len[HCI_SNOOP_ENTRY_NUM];
+static unsigned int hci_acl_snoop_timestamp[HCI_SNOOP_ENTRY_NUM];
+
+static u8 fw_log_snoop_buf[HCI_SNOOP_ENTRY_NUM][HCI_SNOOP_BUF_SIZE];
+static u8 fw_log_snoop_len[HCI_SNOOP_ENTRY_NUM];
+static unsigned int fw_log_snoop_timestamp[HCI_SNOOP_ENTRY_NUM];
+
+static int hci_cmd_snoop_index;
+static int hci_event_snoop_index;
+static int hci_acl_snoop_index;
+static int fw_log_snoop_index;
+
 unsigned char *txbuf;
 static unsigned char *rxbuf;
 static unsigned char *userbuf;
@@ -296,7 +322,27 @@ MODULE_DEVICE_TABLE(sdio, btmtk_sdio_ids);
 static int btmtk_clean_queue(void);
 #ifndef MTK_KERNEL_DEBUG
 static void btmtk_sdio_do_reset_or_wait_wlan_remove_done(void);
+typedef bool (*pcheck_wlan_reset_state) (void);
+static pcheck_wlan_reset_state pf_check_wlan_rst_state;
 #endif
+
+
+static unsigned long btmtk_sdio_kallsyms_lookup_name(const char *name)
+{
+	unsigned long ret = 0;
+
+	ret = kallsyms_lookup_name(name);
+	if (ret) {
+#ifdef CONFIG_ARM
+#ifdef CONFIG_THUMB2_KERNEL
+		/*set bit 0 in address for thumb mode*/
+		ret |= 1;
+#endif
+#endif
+	}
+	return ret;
+}
+
 
 void btmtk_sdio_stop_wait_wlan_remove_tsk(void)
 {
@@ -312,6 +358,7 @@ void btmtk_sdio_stop_wait_wlan_remove_tsk(void)
 	}
 }
 
+#ifndef MTK_KERNEL_DEBUG
 int btmtk_sdio_notify_wlan_remove_start(void)
 {
 	/* notify_wlan_remove_start */
@@ -319,7 +366,7 @@ int btmtk_sdio_notify_wlan_remove_start(void)
 	typedef void (*pnotify_wlan_remove_start) (int reserved);
 	char *notify_wlan_remove_start_func_name = "notify_wlan_remove_start";
 	pnotify_wlan_remove_start pnotify_wlan_remove_start_func =
-		(pnotify_wlan_remove_start)kallsyms_lookup_name(notify_wlan_remove_start_func_name);
+		(pnotify_wlan_remove_start)btmtk_sdio_kallsyms_lookup_name(notify_wlan_remove_start_func_name);
 
 	pr_info("%s: wlan_status %d\n", __func__, wlan_status);
 	if (wlan_status == WLAN_STATUS_CALL_REMOVE_START) {
@@ -327,7 +374,6 @@ int btmtk_sdio_notify_wlan_remove_start(void)
 		return ret;
 	}
 
-	btmtk_sdio_stop_wait_wlan_remove_tsk();
 	/* void notify_wlan_remove_start(void) */
 	if (pnotify_wlan_remove_start_func) {
 		pr_info("%s: do notify %s\n", __func__, notify_wlan_remove_start_func_name);
@@ -349,8 +395,8 @@ int btmtk_sdio_notify_wlan_remove_start(void)
 static void btmtk_sdio_wakeup_mainthread_do_reset(void)
 {
 	if (g_priv) {
-		g_priv->btmtk_dev.reset_dongle = 1;
-		pr_info("%s: set reset_dongle %d", __func__, g_priv->btmtk_dev.reset_dongle);
+		atomic_set(&g_priv->btmtk_dev.reset_dongle, BTMTK_RESET_DOING);
+		pr_info("%s: set reset_dongle %d", __func__, atomic_read(&g_priv->btmtk_dev.reset_dongle));
 		wake_up_interruptible(&g_priv->main_thread.wait_q);
 	} else
 		pr_err("%s: g_priv is NULL", __func__);
@@ -366,7 +412,6 @@ static int btmtk_sdio_wait_wlan_remove_thread(void *ptr)
 		return 0;
 	}
 
-	g_priv->btmtk_dev.reset_progress = 1;
 	for (i = 0; i < 30; i++) {
 		if ((wait_wlan_remove_tsk && kthread_should_stop()) || wlan_remove_done) {
 			pr_warn("%s: break wlan_remove_done %d\n", __func__, wlan_remove_done);
@@ -386,28 +431,26 @@ static int btmtk_sdio_wait_wlan_remove_thread(void *ptr)
 	return 0;
 }
 
-static void btmtk_sdio_start_reset_dongle_progress(void)
-{
-#if defined(MTK_KERNEL_DEBUG)
-	pr_warn("%s: debug mode do not do reset", __func__);
-#else
-	pr_warn("%s: user mode do reset", __func__);
-	btmtk_sdio_notify_wlan_remove_start();
-	btmtk_sdio_do_reset_or_wait_wlan_remove_done();
-#endif
-}
-
 /*============================================================================*/
 /* Interface Functions : timer for uncomplete coredump */
 /*============================================================================*/
-#ifndef MTK_KERNEL_DEBUG
 static void btmtk_sdio_do_reset_or_wait_wlan_remove_done(void)
 {
+	int cur = 0;
+
+	cur = atomic_cmpxchg(&g_priv->btmtk_dev.reset_progress, BTMTK_RESET_DONE, BTMTK_RESET_DOING);
+	if (cur == BTMTK_RESET_DOING) {
+		pr_info("%s: reset in progress, return", __func__);
+		return;
+	}
+
 	pr_info("%s: wlan_remove_done %d\n", __func__, wlan_remove_done);
 	if (wlan_remove_done || (wlan_status == WLAN_STATUS_IS_NOT_LOAD))
 		/* wifi inform bt already, reset chip */
 		btmtk_sdio_wakeup_mainthread_do_reset();
 	else {
+		/* makesure wait thread is stopped */
+		btmtk_sdio_stop_wait_wlan_remove_tsk();
 		/* create thread wait wifi inform bt */
 		pr_info("%s: create btmtk_sdio_wait_wlan_remove_thread\n", __func__);
 		wait_wlan_remove_tsk = kthread_run(
@@ -417,7 +460,68 @@ static void btmtk_sdio_do_reset_or_wait_wlan_remove_done(void)
 			pr_err("%s: btmtk_sdio_wait_wlan_remove_thread create fail\n", __func__);
 	}
 }
+
+static int btmtk_sdio_wait_wlan_rst_done_thread(void *ptr)
+{
+	int  i;
+	bool ret = false;
+
+	pr_info("%s: begin\n", __func__);
+
+	pf_check_wlan_rst_state = (pcheck_wlan_reset_state)btmtk_sdio_kallsyms_lookup_name("check_wlan_reset_state");
+	if (pf_check_wlan_rst_state) {
+		for (i = 0; i < 30; i++) {
+			ret = pf_check_wlan_rst_state();
+			if (!ret)
+				break;
+
+			/* if wifi rst state = 1, we need to wait and polling the state
+			 * until the state =0 or the 15s timer timeout
+			 */
+			msleep(500);
+		}
+	} else {
+		pr_warn("%s: do not get check_wlan_reset_state\n", __func__);
+	}
+
+	btmtk_sdio_notify_wlan_remove_start();
+	whole_chip_rst_ready |= NOTIFY_WLAN_REMOVE_START;
+
+	/*if tigger coredump, we need to simultaneously wait coredump end and after notify wlan
+	 * remove start, then we can do chip reset or start wait wlan remove end.
+	 * if direct trigger reset, don't trigger coredump, whole_chip_rst_ready
+	 * initial value shuld be COREDUMP_END, then we can do chip reset or start wait wlan remove send.
+	 * if within 30s, the whole_chip_rst_ready != (NOTIFY_WLAN_REMOVE_START |  COREDUMP_END),
+	 * we need to do chip reset directly.
+	 */
+	for (i = 0; i < 60; i++) {
+		if (whole_chip_rst_ready != (NOTIFY_WLAN_REMOVE_START | COREDUMP_END))
+			msleep(500);
+		else
+			break;
+	}
+
+	pr_info("%s: whole_chip_rst_ready = %d\n", __func__, whole_chip_rst_ready);
+	whole_chip_rst_ready = COREDUMP_END;
+	btmtk_sdio_do_reset_or_wait_wlan_remove_done();
+	pr_info("%s: end", __func__);
+	return 0;
+}
+
 #endif
+
+static void btmtk_sdio_start_reset_dongle_progress(void)
+{
+#if defined(MTK_KERNEL_DEBUG)
+	pr_warn("%s: debug mode do not do reset", __func__);
+#else
+	pr_warn("%s: user mode do reset, create btmtk_sdio_wait_wlan_rst_done_thread", __func__);
+	wait_wlan_rst_done_task = kthread_run(btmtk_sdio_wait_wlan_rst_done_thread,
+		NULL, "btmtk_sdio_wait_wlan_rst_done_thread");
+	if (!wait_wlan_rst_done_task)
+		pr_err("%s: wait_wlan_rst_done_task is NULL\n", __func__);
+#endif
+}
 
 static int btmtk_sdio_wait_dump_complete_thread(void *ptr)
 {
@@ -435,8 +539,9 @@ static int btmtk_sdio_wait_dump_complete_thread(void *ptr)
 #if defined(MTK_KERNEL_DEBUG)
 	pr_info("%s: debug mode don't do reset\n", __func__);
 #else
-	pr_info("%s: user mode call do reset\n", __func__);
-	btmtk_sdio_do_reset_or_wait_wlan_remove_done();
+	whole_chip_rst_ready |= COREDUMP_END;
+	pr_info("%s: user mode call do reset, whole_chip_rst_ready = %d\n",
+		__func__, whole_chip_rst_ready);
 #endif
 
 	pr_info("%s: end", __func__);
@@ -666,7 +771,7 @@ static int btmtk_sdio_load_woble_setting(u8 *image, char *bin_name,
 		goto LOAD_END;
 
 	err = btmtk_sdio_load_woble_block_setting("APCF_COMPLETE_EVENT",
-			data->woble_setting_apcf_resume, WOBLE_SETTING_COUNT, image);
+			data->woble_setting_apcf_resume_event, WOBLE_SETTING_COUNT, image);
 
 LOAD_END:
 	if (err)
@@ -743,6 +848,167 @@ static int btmtk_sdio_readl(u32 offset,  u32 *val)
 	*val = sdio_readl(g_card->func, offset, &ret);
 	sdio_release_host(g_card->func);
 	return ret;
+}
+
+static void btmtk_sdio_do_gettimeofday(struct timeval *tv)
+{
+#if (KERNEL_VERSION(4,19,85) > LINUX_VERSION_CODE)
+	do_gettimeofday(tv);
+#else
+	struct timespec64 ts;
+	ktime_get_real_ts64(&ts);
+	tv->tv_sec = ts.tv_sec;
+	tv->tv_usec = ts.tv_nsec/1000;
+#endif
+}
+
+static unsigned int btmtk_sdio_get_microseconds(void)
+{
+	struct timeval now = {0};
+	btmtk_sdio_do_gettimeofday(&now);
+	return now.tv_sec * 1000000 + now.tv_usec;
+}
+
+static void btmtk_sdio_hci_snoop_save(u8 type, u8 *buf, u32 len)
+{
+	u32 copy_len = HCI_SNOOP_BUF_SIZE;
+
+	if (buf == NULL || len == 0)
+		return;
+
+	if (len < HCI_SNOOP_BUF_SIZE)
+		copy_len = len;
+
+	switch (type) {
+	case HCI_COMMAND_PKT:
+		hci_cmd_snoop_len[hci_cmd_snoop_index] = copy_len & 0xff;
+		memset(hci_cmd_snoop_buf[hci_cmd_snoop_index], 0, HCI_SNOOP_BUF_SIZE);
+		memcpy(hci_cmd_snoop_buf[hci_cmd_snoop_index], buf, copy_len & 0xff);
+		hci_cmd_snoop_timestamp[hci_cmd_snoop_index] = btmtk_sdio_get_microseconds();
+
+		hci_cmd_snoop_index--;
+		if (hci_cmd_snoop_index < 0)
+			hci_cmd_snoop_index = HCI_SNOOP_ENTRY_NUM - 1;
+		break;
+	case HCI_ACLDATA_PKT:
+		hci_acl_snoop_len[hci_acl_snoop_index] = copy_len & 0xff;
+		memset(hci_acl_snoop_buf[hci_acl_snoop_index], 0, HCI_SNOOP_BUF_SIZE);
+		memcpy(hci_acl_snoop_buf[hci_acl_snoop_index], buf, copy_len & 0xff);
+		hci_acl_snoop_timestamp[hci_acl_snoop_index] = btmtk_sdio_get_microseconds();
+
+		hci_acl_snoop_index--;
+		if (hci_acl_snoop_index < 0)
+			hci_acl_snoop_index = HCI_SNOOP_ENTRY_NUM - 1;
+		break;
+	case HCI_EVENT_PKT:
+		hci_event_snoop_len[hci_event_snoop_index] = copy_len;
+		memset(hci_event_snoop_buf[hci_event_snoop_index], 0,
+			HCI_SNOOP_BUF_SIZE);
+		memcpy(hci_event_snoop_buf[hci_event_snoop_index], buf, copy_len);
+		hci_event_snoop_timestamp[hci_event_snoop_index] = btmtk_sdio_get_microseconds();
+
+		hci_event_snoop_index--;
+		if (hci_event_snoop_index < 0)
+			hci_event_snoop_index = HCI_SNOOP_ENTRY_NUM - 1;
+		break;
+	case FW_LOG_PKT:
+		fw_log_snoop_len[fw_log_snoop_index] = copy_len;
+		memset(fw_log_snoop_buf[fw_log_snoop_index], 0,
+			HCI_SNOOP_BUF_SIZE);
+		memcpy(fw_log_snoop_buf[fw_log_snoop_index], buf, copy_len);
+		fw_log_snoop_timestamp[fw_log_snoop_index] = btmtk_sdio_get_microseconds();
+
+		fw_log_snoop_index--;
+		if (fw_log_snoop_index < 0)
+			fw_log_snoop_index = HCI_SNOOP_ENTRY_NUM - 1;
+		break;
+	default:
+		BTSDIO_INFO_RAW(buf, len, "type(%d):", type);
+	}
+}
+
+static void btmtk_sdio_hci_snoop_print(void)
+{
+	int counter, index;
+
+	pr_info("%s:HCI Command Dump\n", __func__);
+	index = hci_cmd_snoop_index + 1;
+	if (index >= HCI_SNOOP_ENTRY_NUM)
+		index = 0;
+	for (counter = 0; counter < HCI_SNOOP_ENTRY_NUM; counter++) {
+		if (hci_cmd_snoop_len[index] != 0)
+			BTSDIO_INFO_RAW(hci_cmd_snoop_buf[index], hci_cmd_snoop_len[index],
+				"	time(%u):", hci_cmd_snoop_timestamp[index]);
+		index++;
+		if (index >= HCI_SNOOP_ENTRY_NUM)
+			index = 0;
+	}
+
+	pr_info("%s:HCI Event Dump\n", __func__);
+	index = hci_event_snoop_index + 1;
+	if (index >= HCI_SNOOP_ENTRY_NUM)
+		index = 0;
+	for (counter = 0; counter < HCI_SNOOP_ENTRY_NUM; counter++) {
+		if (hci_event_snoop_len[index] != 0)
+			BTSDIO_INFO_RAW(hci_event_snoop_buf[index], hci_event_snoop_len[index],
+				"	time(%u):", hci_event_snoop_timestamp[index]);
+		index++;
+		if (index >= HCI_SNOOP_ENTRY_NUM)
+			index = 0;
+	}
+
+	pr_info("%s:HCI ACL Dump\n", __func__);
+	index = hci_acl_snoop_index + 1;
+	if (index >= HCI_SNOOP_ENTRY_NUM)
+		index = 0;
+	for (counter = 0; counter < HCI_SNOOP_ENTRY_NUM; counter++) {
+		if (hci_acl_snoop_len[index] != 0)
+			BTSDIO_INFO_RAW(hci_acl_snoop_buf[index], hci_acl_snoop_len[index],
+				"	time(%u):", hci_acl_snoop_timestamp[index]);
+		index++;
+		if (index >= HCI_SNOOP_ENTRY_NUM)
+			index = 0;
+	}
+
+	pr_info("%s:FW Log Dump\n", __func__);
+	index = fw_log_snoop_index + 1;
+	if (index >= HCI_SNOOP_ENTRY_NUM)
+		index = 0;
+	for (counter = 0; counter < HCI_SNOOP_ENTRY_NUM; counter++) {
+		if (fw_log_snoop_len[index] != 0)
+			BTSDIO_INFO_RAW(fw_log_snoop_buf[index], fw_log_snoop_len[index],
+				"	time(%u):", fw_log_snoop_timestamp[index]);
+		index++;
+		if (index >= HCI_SNOOP_ENTRY_NUM)
+			index = 0;
+	}
+}
+
+
+static void btmtk_sdio_hci_snoop_init(void)
+{
+	hci_cmd_snoop_index = HCI_SNOOP_ENTRY_NUM - 1;
+	hci_event_snoop_index = HCI_SNOOP_ENTRY_NUM - 1;
+	hci_acl_snoop_index = HCI_SNOOP_ENTRY_NUM - 1;
+	fw_log_snoop_index = HCI_SNOOP_ENTRY_NUM - 1;
+
+	memset(hci_cmd_snoop_buf, 0, HCI_SNOOP_ENTRY_NUM * HCI_SNOOP_BUF_SIZE * sizeof(u8));
+	memset(hci_cmd_snoop_len, 0, HCI_SNOOP_ENTRY_NUM * sizeof(u8));
+	memset(hci_cmd_snoop_timestamp, 0, HCI_SNOOP_ENTRY_NUM * sizeof(unsigned int)
+);
+
+	memset(hci_event_snoop_buf, 0, HCI_SNOOP_ENTRY_NUM * HCI_SNOOP_BUF_SIZE * sizeof(u8));
+	memset(hci_event_snoop_len, 0, HCI_SNOOP_ENTRY_NUM * sizeof(u8));
+	memset(hci_event_snoop_timestamp, 0, HCI_SNOOP_ENTRY_NUM * sizeof(unsigned int));
+
+	memset(hci_acl_snoop_buf, 0, HCI_SNOOP_ENTRY_NUM * HCI_SNOOP_BUF_SIZE * sizeof(u8));
+	memset(hci_acl_snoop_len, 0, HCI_SNOOP_ENTRY_NUM * sizeof(u8));
+	memset(hci_acl_snoop_timestamp, 0, HCI_SNOOP_ENTRY_NUM * sizeof(unsigned int)
+);
+
+	memset(fw_log_snoop_buf, 0, HCI_SNOOP_ENTRY_NUM * HCI_SNOOP_BUF_SIZE * sizeof(u8));
+	memset(fw_log_snoop_len, 0, HCI_SNOOP_ENTRY_NUM * sizeof(u8));
+	memset(fw_log_snoop_timestamp, 0, HCI_SNOOP_ENTRY_NUM * sizeof(unsigned int));
 }
 
 static void btmtk_sdio_set_no_fw_own(struct btmtk_private *priv, bool no_fw_own)
@@ -1254,7 +1520,11 @@ static int btmtk_sdio_bt_set_power(u8 onoff)
 	if (memcmp(wmt_event, rxbuf+MTK_SDIO_PACKET_HEADER_SIZE,
 			sizeof(wmt_event)) != 0) {
 		ret = -EIO;
+		g_card->dongle_state = BT_SDIO_DONGLE_STATE_ERROR;
 		pr_info("%s: fail\n", __func__);
+	} else {
+		g_card->dongle_state =
+			onoff ? BT_SDIO_DONGLE_STATE_POWER_ON : BT_SDIO_DONGLE_STATE_POWER_OFF;
 	}
 
 	return ret;
@@ -2708,7 +2978,9 @@ static int btmtk_sdio_card_to_host(struct btmtk_private *priv, const u8 *event, 
 	int fw_dump_pkt = 0;
 	static u8 picus_blocking_warn;
 	static u8 fwdump_blocking_warn;
+#if SAVE_FW_DUMP_IN_KERNEL
 	char *dump_file_name;
+#endif /* SAVE_FW_DUMP_IN_KERNEL */
 
 	if (rx_length > (MTK_SDIO_PACKET_HEADER_SIZE + 1))
 		buf_len = rx_length - (MTK_SDIO_PACKET_HEADER_SIZE + 1);
@@ -2729,7 +3001,7 @@ static int btmtk_sdio_card_to_host(struct btmtk_private *priv, const u8 *event, 
 			print_dump_data_counter++;
 			pr_warn("%s : dump %d %s\n", __func__, print_dump_data_counter,
 					&rxbuf[SDIO_HEADER_LEN + 9]);
-#ifndef MTK_KERNEL_DEBUG
+#ifndef MTK_FULL_COREDUMP
 		/* release mode do reset dongle if print dump finish */
 		} else {
 			if (print_dump_data_counter == PRINT_DUMP_COUNT) {
@@ -2748,9 +3020,11 @@ static int btmtk_sdio_card_to_host(struct btmtk_private *priv, const u8 *event, 
 		}
 		fw_is_doing_coredump = true;
 
-#if SAVE_FW_DUMP_IN_KERNEL
-		if (fw_dump_file == NULL && print_dump_data_counter == 1) {
+		if (print_dump_data_counter == 1) {
+			whole_chip_rst_ready = COREDUMP_START;
 			/* #if SAVE_FW_DUMP_IN_KERNEL */
+			g_card->dongle_state = BT_SDIO_DONGLE_STATE_FW_DUMP;
+			btmtk_sdio_hci_snoop_print();
 			pr_info("%s: create btmtk_sdio_wait_dump_complete_thread\n", __func__);
 			wait_dump_complete_tsk = kthread_run(btmtk_sdio_wait_dump_complete_thread,
 				NULL, "btmtk_sdio_wait_dump_complete_thread");
@@ -2758,48 +3032,61 @@ static int btmtk_sdio_card_to_host(struct btmtk_private *priv, const u8 *event, 
 			if (!wait_dump_complete_tsk)
 				pr_err("%s: wait_dump_complete_tsk is NULL\n", __func__);
 
-			btmtk_sdio_notify_wlan_remove_start();
+#if defined(MTK_KERNEL_DEBUG)
+				pr_warn("%s: debug mode do not create btmtk_sdio_wait_wlan_rst_done_thread", __func__);
+#else
+			pr_info("%s: create btmtk_sdio_wait_wlan_rst_done_thread\n", __func__);
+			wait_wlan_rst_done_task = kthread_run(btmtk_sdio_wait_wlan_rst_done_thread,
+				NULL, "btmtk_sdio_wait_wlan_rst_done_thread");
+			if (!wait_wlan_rst_done_task)
+				pr_err("%s: wait_wlan_rst_done_task is NULL\n", __func__);
+#endif
+
 			btmtk_sdio_set_no_fw_own(g_priv, TRUE);
+#if SAVE_FW_DUMP_IN_KERNEL
+		    if (fw_dump_file == NULL) {
+				for (i = 0; i < ARRAY_SIZE(COREDUMP_FILE_NAME); i++) {
+					memset(fw_dump_file_name, 0, sizeof(fw_dump_file_name));
+					dump_file_name = COREDUMP_FILE_NAME[i];
+					snprintf(fw_dump_file_name, sizeof(fw_dump_file_name),
+						"%s_%d", dump_file_name, current_fwdump_file_number);
+					pr_warn("%s : open file %s\n", __func__, fw_dump_file_name);
+					fw_dump_file = filp_open(fw_dump_file_name, O_RDWR | O_CREAT, 0644);
 
-			for (i = 0; i < ARRAY_SIZE(COREDUMP_FILE_NAME); i++) {
-				memset(fw_dump_file_name, 0, sizeof(fw_dump_file_name));
-				dump_file_name = COREDUMP_FILE_NAME[i];
-				snprintf(fw_dump_file_name, sizeof(fw_dump_file_name),
-					"%s_%d", dump_file_name, current_fwdump_file_number);
-				pr_warn("%s : open file %s\n", __func__, fw_dump_file_name);
-				fw_dump_file = filp_open(fw_dump_file_name, O_RDWR | O_CREAT, 0644);
+					if (!(IS_ERR(fw_dump_file))) {
+						pr_warn("%s : open file %s success\n", __func__,
+							fw_dump_file_name);
+					} else {
+						pr_warn("%s : open file %s fail\n",	__func__,
+							fw_dump_file_name);
+						fw_dump_file = NULL;
+						continue;
+					}
 
-				if (!(IS_ERR(fw_dump_file))) {
-					pr_warn("%s : open file %s success\n", __func__,
-						fw_dump_file_name);
-				} else {
-					pr_warn("%s : open file %s fail\n",	__func__,
-						fw_dump_file_name);
-					fw_dump_file = NULL;
-					continue;
+					if (fw_dump_file && fw_dump_file->f_op == NULL) {
+						pr_warn("%s : %s fw_dump_file->f_op is NULL, close\n",
+							fw_dump_file_name, __func__);
+						filp_close(fw_dump_file, NULL);
+						fw_dump_file = NULL;
+						continue;
+					}
+
+					if (fw_dump_file && fw_dump_file->f_op->write == NULL) {
+						pr_warn("%s : %s fw_dump_file->f_op->write is NULL, close\n",
+							fw_dump_file_name, __func__);
+						filp_close(fw_dump_file, NULL);
+						fw_dump_file = NULL;
+						continue;
+					}
+					/* open file success */
+					current_fwdump_file_number++;
+					break;
 				}
-
-				if (fw_dump_file && fw_dump_file->f_op == NULL) {
-					pr_warn("%s : %s fw_dump_file->f_op is NULL, close\n",
-						fw_dump_file_name, __func__);
-					filp_close(fw_dump_file, NULL);
-					fw_dump_file = NULL;
-					continue;
-				}
-
-				if (fw_dump_file && fw_dump_file->f_op->write == NULL) {
-					pr_warn("%s : %s fw_dump_file->f_op->write is NULL, close\n",
-						fw_dump_file_name, __func__);
-					filp_close(fw_dump_file, NULL);
-					fw_dump_file = NULL;
-					continue;
-				}
-				/* open file success */
-				current_fwdump_file_number++;
-				break;
 			}
+#endif /* SAVE_FW_DUMP_IN_KERNEL */
 		}
 
+#if SAVE_FW_DUMP_IN_KERNEL
 		if ((dump_len > 0) && fw_dump_file && fw_dump_file->f_op
 				&& fw_dump_file->f_op->write)
 			fw_dump_file->f_op->write(fw_dump_file, &rxbuf[SDIO_HEADER_LEN + 9],
@@ -2839,7 +3126,7 @@ static int btmtk_sdio_card_to_host(struct btmtk_private *priv, const u8 *event, 
 	}
 #endif /* SUPPORT_FW_DUMP */
 
-#ifndef MTK_KERNEL_DEBUG
+#ifndef MTK_FULL_COREDUMP
 SKIP_DUMP:
 #endif
 	if (rx_length > (SDIO_HEADER_LEN + 4) &&
@@ -2861,7 +3148,14 @@ SKIP_DUMP:
 		if (rx_length < (buf_len + MTK_SDIO_PACKET_HEADER_SIZE + 1))
 			goto data_err;
 		btmtk_sdio_dispatch_fwlog(&rxbuf[MTK_SDIO_PACKET_HEADER_SIZE + 1], buf_len);
+		btmtk_sdio_hci_snoop_save(FW_LOG_PKT, &rxbuf[MTK_SDIO_PACKET_HEADER_SIZE + 1], buf_len);
 		goto exit;
+	} else if (rxbuf[SDIO_HEADER_LEN] == HCI_EVENT_PKT &&
+		rxbuf[SDIO_HEADER_LEN + 1] == 0xE7 &&
+		rxbuf[SDIO_HEADER_LEN + 2] == 0x10 ) {
+		pr_debug("%s passSCAN:0x%02X, enterAPCF:0x%02X, passAPCF:0x%02X, toggleGPIO:0x%02X\n", __func__,
+		rxbuf[SDIO_HEADER_LEN + 3],
+		rxbuf[SDIO_HEADER_LEN + 7], rxbuf[SDIO_HEADER_LEN + 11], rxbuf[SDIO_HEADER_LEN + 15]);
 	}
 
 	type = rxbuf[MTK_SDIO_PACKET_HEADER_SIZE];
@@ -2901,6 +3195,10 @@ SKIP_DUMP:
 	case HCI_EVENT_PKT:
 		buf_len = skb->data[1] + 2;
 		break;
+	default:
+		BTSDIO_INFO_RAW(rxbuf, rx_length, "unknown data type, drop data");
+		ret = -EINVAL;
+		goto exit;
 	}
 
 	if (buf_len > MTK_RXDATA_SIZE) {
@@ -2961,6 +3259,7 @@ SKIP_DUMP:
 			skb = NULL;
 			goto exit;
 		}
+		btmtk_sdio_hci_snoop_save(type, skb->data, buf_len);
 		btmtk_usb_dispatch_data_bluetooth_kpi(&rxbuf[MTK_SDIO_PACKET_HEADER_SIZE], buf_len + 1, 0);
 
 		fops_skb = bt_skb_alloc(buf_len, GFP_ATOMIC);
@@ -3230,7 +3529,7 @@ static int btmtk_sdio_enable_host_int(struct btmtk_sdio_card *card)
 		typedef int (*fp_sdio_hook)(struct mmc_host *host,
 						unsigned int width);
 		fp_sdio_hook func_sdio_hook =
-			(fp_sdio_hook)kallsyms_lookup_name("mmc_set_bus_width");
+			(fp_sdio_hook)btmtk_sdio_kallsyms_lookup_name("mmc_set_bus_width");
 		unsigned char data = 0;
 
 		data = sdio_f0_readb(card->func, SDIO_CCCR_IF, &ret);
@@ -3525,7 +3824,7 @@ static int btmtk_sdio_set_card_clkpd(int on)
 	typedef void (*psdio_set_card_clkpd) (int on, struct sdio_func *func);
 	char *sdio_set_card_clkpd_func_name = "sdio_set_card_clkpd";
 	psdio_set_card_clkpd psdio_set_card_clkpd_func =
-		(psdio_set_card_clkpd)kallsyms_lookup_name(sdio_set_card_clkpd_func_name);
+		(psdio_set_card_clkpd)btmtk_sdio_kallsyms_lookup_name(sdio_set_card_clkpd_func_name);
 
 	if (!g_card) {
 		pr_err("%s: g_card is NULL\n", __func__);
@@ -3608,7 +3907,8 @@ int btmtk_sdio_bt_trigger_core_dump(int trigger_dump)
 		return 0;
 	}
 
-	if (g_priv->btmtk_dev.reset_dongle) {
+	if (atomic_read(&g_priv->btmtk_dev.reset_dongle) ||
+		atomic_read(&g_priv->btmtk_dev.reset_progress)) {
 		pr_warn("%s reset_dongle is true, return\n", __func__);
 		return 0;
 	}
@@ -3631,10 +3931,14 @@ int btmtk_sdio_bt_trigger_core_dump(int trigger_dump)
 		skb_queue_tail(&g_priv->adapter->tx_queue, skb);
 		wake_up_interruptible(&g_priv->main_thread.wait_q);
 	} else {
-		wait_wlan_remove_tsk = kthread_run(btmtk_sdio_wait_wlan_remove_thread,
-			NULL, "btmtk_sdio_wait_dump_complete_thread");
-
-		btmtk_sdio_notify_wlan_remove_start();
+#if defined(MTK_KERNEL_DEBUG)
+			pr_warn("%s: debug mode do not do reset", __func__);
+#else
+		wait_wlan_rst_done_task = kthread_run(btmtk_sdio_wait_wlan_rst_done_thread,
+			NULL, "btmtk_sdio_wait_wlan_rst_done_thread");
+		if (!wait_wlan_rst_done_task)
+				pr_err("%s: wait_wlan_rst_done_task is NULL\n", __func__);
+#endif
 	}
 
 	return 0;
@@ -3647,7 +3951,7 @@ void btmtk_sdio_notify_wlan_toggle_rst_end(void)
 	char *notify_wlan_toggle_rst_end_func_name = "notify_wlan_toggle_rst_end";
 	/*void notify_wlan_toggle_rst_end(void)*/
 	pnotify_wlan_toggle_rst_end pnotify_wlan_toggle_rst_end_func =
-		(pnotify_wlan_toggle_rst_end) kallsyms_lookup_name(notify_wlan_toggle_rst_end_func_name);
+		(pnotify_wlan_toggle_rst_end) btmtk_sdio_kallsyms_lookup_name(notify_wlan_toggle_rst_end_func_name);
 
 	if (pnotify_wlan_toggle_rst_end_func) {
 		pr_info("%s: do notify %s\n", __func__, notify_wlan_toggle_rst_end_func_name);
@@ -3666,9 +3970,8 @@ int btmtk_sdio_reset_dongle(void)
 		pr_info("%s: g_priv = NULL, return\n", __func__);
 		return -1;
 	}
+	probe_ready = false;
 
-	if (need_reset_stack == HW_ERR_NONE)
-		need_reset_stack = HW_ERR_CODE_CHIP_RESET;
 	wlan_remove_done = 0;
 
 retry_reset:
@@ -3679,6 +3982,7 @@ retry_reset:
 	}
 	pr_info("%s run %d\n", __func__, retry);
 	ret = 0;
+	btmtk_clean_queue();
 	if (btmtk_sdio_toggle_rst_pin()) {
 		ret = -1;
 		goto rst_dongle_err;
@@ -3708,15 +4012,19 @@ rst_dongle_err:
 
 	if (g_priv) {
 		g_priv->btmtk_dev.tx_dnld_rdy = 1;
-		g_priv->btmtk_dev.reset_dongle = 0;
+		atomic_set(&g_priv->btmtk_dev.reset_dongle, BTMTK_RESET_DONE);
 	} else
 		pr_err("%s g_priv is NULL no set tx_dnld_rdy = 1\n", __func__);
 
 	wlan_status = WLAN_STATUS_DEFAULT;
-	btmtk_clean_queue();
-	g_priv->btmtk_dev.reset_progress = 0;
+	atomic_set(&g_priv->btmtk_dev.reset_progress, BTMTK_RESET_DONE);
 	print_dump_data_counter = 0;
 	fw_is_doing_coredump = false;
+
+	if (need_reset_stack == HW_ERR_NONE)
+		need_reset_stack = HW_ERR_CODE_CHIP_RESET;
+	probe_ready = true;
+
 	pr_info("%s return ret = %d\n", __func__, ret);
 	return ret;
 }
@@ -3734,8 +4042,52 @@ static irqreturn_t btmtk_sdio_woble_isr(int irq, void *dev)
 	pr_info("%s:call wake lock\n", __func__);
 	wait_powerkey_time = msecs_to_jiffies(WAIT_POWERKEY_TIMEOUT);
 	wake_lock_timeout(&data->eint_wlock, wait_powerkey_time);/*10s*/
+
+	input_report_key(data->WoBLEInputDev, KEY_WAKEUP, 1);
+	input_sync(data->WoBLEInputDev);
+	input_report_key(data->WoBLEInputDev, KEY_WAKEUP, 0);
+	input_sync(data->WoBLEInputDev);
 	pr_info("%s end\n", __func__);
 	return IRQ_HANDLED;
+}
+
+static int btmtk_sdio_woble_input_init(struct btmtk_sdio_card *data)
+{
+	int ret = 0;
+
+	data->WoBLEInputDev = input_allocate_device();
+	if (IS_ERR(data->WoBLEInputDev)) {
+		pr_err("%s input_allocate_device error\n", __func__);
+		return -ENOMEM;
+	}
+
+	data->WoBLEInputDev->name = "WOBLE_INPUT_DEVICE";
+	data->WoBLEInputDev->id.bustype = BUS_HOST;
+	data->WoBLEInputDev->id.vendor = 0x0002;
+	data->WoBLEInputDev->id.product = 0x0002;
+	data->WoBLEInputDev->id.version = 0x0002;
+
+	__set_bit(EV_KEY, data->WoBLEInputDev->evbit);
+	__set_bit(KEY_WAKEUP, data->WoBLEInputDev->keybit);
+
+	ret = input_register_device(data->WoBLEInputDev);
+	if (ret < 0) {
+		input_free_device(data->WoBLEInputDev);
+		data->WoBLEInputDev = NULL;
+		pr_err("%s input_register_device %d\n", __func__, ret);
+		return ret;
+	}
+
+	return ret;
+}
+
+static void btmtk_sdio_woble_input_deinit(struct btmtk_sdio_card *data)
+{
+	if (data->WoBLEInputDev) {
+		 input_unregister_device(data->WoBLEInputDev);
+		 input_free_device(data->WoBLEInputDev);
+		 data->WoBLEInputDev = NULL;
+	}
 }
 
 static int btmtk_sdio_RegisterBTIrq(struct btmtk_sdio_card *data)
@@ -3743,7 +4095,7 @@ static int btmtk_sdio_RegisterBTIrq(struct btmtk_sdio_card *data)
 	struct device_node *eint_node = NULL;
 	int interrupts[2];
 
-	eint_node = of_find_compatible_node(NULL, NULL, "mediatek,mt7668_bt_ctrl");
+	eint_node = of_find_compatible_node(NULL, NULL, "mediatek,mt76xx_bt_ctrl");
 	pr_info("%s begin\n", __func__);
 	if (eint_node) {
 		pr_info("%s Get mt76xx_bt_ctrl compatible node\n", __func__);
@@ -3754,7 +4106,7 @@ static int btmtk_sdio_RegisterBTIrq(struct btmtk_sdio_card *data)
 						   interrupts, ARRAY_SIZE(interrupts));
 			data->wobt_irqlevel = interrupts[1];
 			if (request_irq(data->wobt_irq, btmtk_sdio_woble_isr,
-					data->wobt_irqlevel, "mt7668_bt_ctrl-eint", data))
+					data->wobt_irqlevel, "mt76xx_bt_ctrl-eint", data))
 				pr_info("%s WOBTIRQ LINE NOT AVAILABLE!!\n", __func__);
 			else {
 				pr_info("%s disable BT IRQ\n", __func__);
@@ -3803,8 +4155,11 @@ static int btmtk_sdio_probe(struct sdio_func *func,
 	card->func = func;
 	g_card = card;
 
+	btmtk_sdio_hci_snoop_init();
+
 #if SUPPORT_EINT
 	btmtk_sdio_RegisterBTIrq(card);
+	btmtk_sdio_woble_input_init(card);
 #endif
 
 	if (id->driver_data) {
@@ -3865,6 +4220,7 @@ static int btmtk_sdio_probe(struct sdio_func *func,
 	priv->hw_set_own_back =  btmtk_sdio_set_own_back;
 	priv->hw_sdio_reset_dongle = btmtk_sdio_reset_dongle;
 	priv->start_reset_dongle_progress = btmtk_sdio_start_reset_dongle_progress;
+	priv->hci_snoop_save = btmtk_sdio_hci_snoop_save;
 	g_priv = priv;
 
 	memset(&metabuffer.buffer, 0, META_BUFFER_SIZE);
@@ -3945,6 +4301,9 @@ static void btmtk_sdio_remove(struct sdio_func *func)
 
 				btmtk_sdio_disable_host_int(card);
 			}
+#if SUPPORT_EINT
+			btmtk_sdio_woble_input_deinit(g_card);
+#endif
 			btmtk_sdio_woble_free_setting();
 			pr_debug("unregester dev\n");
 			card->priv->surprise_removed = true;
@@ -4266,8 +4625,11 @@ static int btmtk_sdio_handle_entering_WoBLE_state(void)
 {
 	int ret = -1;
 
-	pr_debug("%s: begin", __func__);
+	pr_debug("%s: begin, dongle state %d", __func__, g_card->dongle_state);
 	if (is_support_unify_woble(g_card)) {
+
+		g_card->dongle_state = BT_SDIO_DONGLE_STATE_WOBLE;
+
 		ret = btmtk_sdio_send_get_vendor_cap();
 		if (ret < 0) {
 			pr_err("%s: btmtk_sdio_send_get_vendor_cap return fail ret = %d", __func__, ret);
@@ -4342,12 +4704,17 @@ static int btmtk_sdio_handle_leaving_WoBLE_state(void)
 
 	if (g_card == NULL) {
 		pr_err("%s: g_card is NULL return", __func__);
-		return 0;
+		goto exit;
 	}
 
 	if (!is_support_unify_woble(g_card)) {
 		pr_err("%s: do nothing", __func__);
-		return 0;
+		goto exit;
+	}
+
+	if (g_card->dongle_state != BT_SDIO_DONGLE_STATE_WOBLE) {
+		pr_err("%s: Not in woble mode", __func__);
+		goto exit;
 	}
 
 	if (g_card->woble_setting_radio_on[0].length &&
@@ -4359,37 +4726,40 @@ static int btmtk_sdio_handle_leaving_WoBLE_state(void)
 			g_card->woble_setting_radio_on_comp_event, "radio on");
 		if (ret) {
 			pr_err("%s: wradio on error", __func__);
-			return ret;
+			goto finish;
 		}
 
 		ret = btmtk_sdio_send_woble_settings(g_card->woble_setting_apcf_resume,
 			g_card->woble_setting_apcf_resume_event, "apcf resume");
 		if (ret) {
 			pr_err("%s: apcf resume error", __func__);
-			return ret;
+			goto finish;
 		}
 
 	} else { /* use default */
 		ret = btmtk_sdio_send_leave_woble_suspend_cmd();
 		if (ret) {
 			pr_err("%s: radio on error", __func__);
-			return ret;
+			goto finish;
 		}
 
 		ret = btmtk_sdio_del_Woble_APCF_inde();
 		if (ret) {
 			pr_err("%s: del apcf index error", __func__);
-			return ret;
+			goto finish;
 		}
 	}
 
 	if (ret) {
 		pr_err("%s: woble_setting_radio_on return error", __func__);
-		return ret;
+		goto finish;
 	}
 
+finish:
+	g_card->dongle_state = BT_SDIO_DONGLE_STATE_POWER_ON;
 
-
+exit:
+	pr_info("%s: end, ret %d\n", __func__, ret);
 	return ret;
 }
 
@@ -4440,6 +4810,11 @@ static int btmtk_sdio_suspend(struct device *dev)
 		pr_info("%s: end", __func__);
 		return 0;
 	}
+
+	if (g_card->dongle_state != BT_SDIO_DONGLE_STATE_POWER_ON) {
+		pr_warn("%s: dongle state: %d is not power on", __func__, g_card->dongle_state);
+		return 0;
+	}
 	pr_debug("%s start to send DRIVER_OWN\n", __func__);
 	ret = btmtk_sdio_set_own_back(DRIVER_OWN);
 
@@ -4453,6 +4828,14 @@ static int btmtk_sdio_suspend(struct device *dev)
 
 #if SUPPORT_EINT
 	if (g_card->wobt_irq != 0 && atomic_read(&(g_card->irq_enable_count)) == 0) {
+		//clear irq num before enable woble irq
+		struct irq_desc *desc;
+		desc = irq_to_desc(g_card->wobt_irq);
+		if (desc) {
+			desc->irq_data.chip->irq_ack(&desc->irq_data);
+		} else {
+			pr_info("%s:can't get desc\n", __func__);
+		}
 		pr_info("%s:enable BT IRQ:%d\n", __func__, g_card->wobt_irq);
 		irq_set_irq_wake(g_card->wobt_irq, 1);
 		enable_irq(g_card->wobt_irq);
@@ -4497,6 +4880,7 @@ static int btmtk_sdio_resume(struct device *dev)
 		pr_info("%s: data->suspend_count %d, return 0", __func__, g_card->suspend_count);
 		return 0;
 	}
+
 #if SUPPORT_EINT
 	if (g_card->wobt_irq != 0 && atomic_read(&(g_card->irq_enable_count)) == 1) {
 		pr_info("%s:disable BT IRQ:%d\n", __func__, g_card->wobt_irq);
@@ -4532,21 +4916,10 @@ static struct sdio_driver bt_mtk_sdio = {
 
 static int btmtk_clean_queue(void)
 {
-	struct sk_buff *skb = NULL;
-
 	LOCK_UNSLEEPABLE_LOCK(&(metabuffer.spin_lock));
-	if (!skb_queue_empty(&g_priv->adapter->fops_queue)) {
-		pr_info("%s clean data in fops_queue\n", __func__);
-		do {
-			skb = skb_dequeue(&g_priv->adapter->fops_queue);
-			if (skb == NULL) {
-				pr_info("%s skb=NULL error break\n", __func__);
-				break;
-			}
-
-			kfree_skb(skb);
-		} while (!skb_queue_empty(&g_priv->adapter->fops_queue));
-	}
+	pr_info("%s clean data in tx_queue and fops_queue\n", __func__);
+	skb_queue_purge(&g_priv->adapter->tx_queue);
+	skb_queue_purge(&g_priv->adapter->fops_queue);
 	UNLOCK_UNSLEEPABLE_LOCK(&(metabuffer.spin_lock));
 	return 0;
 }
@@ -4644,10 +5017,21 @@ ssize_t btmtk_fops_write(struct file *filp, const char __user *buf,
 		return -EFAULT;
 	}
 
+	if (g_card->dongle_state != BT_SDIO_DONGLE_STATE_POWER_ON) {
+		pr_info("%s dongle_state is %d return", __func__, g_card->dongle_state);
+		return 0;
+	}
+
 	if (need_reopen) {
 		pr_info("%s: need_reopen (%d)!", __func__, need_reopen);
 		return -EFAULT;
 	}
+
+	if (need_reset_stack) {
+		pr_info("%s: need_reset_stack (%d)!", __func__, need_reset_stack);
+		return -EFAULT;
+	}
+
 #if 0
 	pr_info("%s : (%d) %02X %02X %02X %02X "
 			%"02X %02X %02X %02X\n",

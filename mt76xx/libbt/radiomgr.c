@@ -56,7 +56,6 @@ extern BT_INIT_CB_T btinit_ctrl;
 ***************************************************************************/
 
 extern VOID *GORM_FW_Init_Thread(VOID *ptr);
-extern VOID *GORM_SCO_Init_Thread(VOID *ptr);
 extern VOID thread_exit(INT32 signo);
 
 
@@ -85,28 +84,32 @@ BOOL BT_InitDevice(
         LOG_ERR("Register signal handler fails errno(%d)\n", errno);
     }
 
-    if (pthread_create(&btinit_ctrl.worker_thread, NULL, \
+    pthread_attr_t attr;
+    int i4_ret = 0;
+    i4_ret = pthread_attr_init(&attr);
+    if (0 != i4_ret)
+    {
+        LOG_ERR("thread attr init fail\n");
+        return FALSE;
+    }
+
+    i4_ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (0 != i4_ret)
+    {
+        pthread_attr_destroy(&attr);
+        LOG_ERR("thread pthread_attr_setdetachstate fail\n");
+        return FALSE;
+    }
+    if (pthread_create(&btinit_ctrl.worker_thread, &attr, \
           GORM_FW_Init_Thread, NULL) != 0) {
+        pthread_attr_destroy(&attr);
         LOG_ERR("Create FW init thread fails\n");
         return FALSE;
     }
     else {
         btinit_ctrl.worker_thread_running = TRUE;
-        return TRUE;
-    }
-}
-
-BOOL BT_InitSCO(VOID)
-{
-    LOG_DBG("BT_InitSCO\n");
-
-    if (pthread_create(&btinit_ctrl.worker_thread, NULL, \
-          GORM_SCO_Init_Thread, NULL) != 0) {
-        LOG_ERR("Create SCO init thread fails\n");
-        return FALSE;
-    }
-    else {
-        btinit_ctrl.worker_thread_running = TRUE;
+        LOG_DBG("FW init thread id 0x%x is create and running\n", btinit_ctrl.worker_thread);
+        pthread_attr_destroy(&attr);
         return TRUE;
     }
 }
@@ -121,12 +124,27 @@ BOOL BT_DeinitDevice(VOID)
 VOID BT_Cleanup(VOID)
 {
     /* Cancel any remaining running thread */
+    UINT8 retry = 0;
+    LOG_WAN("BT_Cleanup\n");
     if (btinit_ctrl.worker_thread_running) {
-        pthread_kill(btinit_ctrl.worker_thread, SIGRTMIN);
-        /* Wait until thread exit */
-        pthread_join(btinit_ctrl.worker_thread, NULL);
-        btinit_ctrl.worker_thread_running = FALSE;
+        LOG_WAN("BT_Cleanup() kill thread: 0x%x\n", btinit_ctrl.worker_thread);
+        //wait for the termination of the worker thread, this could not be happen normally.
+        while (btinit_ctrl.worker_thread_running && (retry++ < 10)) {
+            usleep(300000);
+            LOG_WAN("BT_Cleanup() waiting for worker thread 0x%x exit retry=%dms\n", \
+                btinit_ctrl.worker_thread, retry*300);
+        }
+        if (retry >= 10) {
+            LOG_ERR("BT_Cleanup() Fatal Error!!! worker thread 0x%x is not end normally.\n", \
+                btinit_ctrl.worker_thread);
+            /*pthread_kill cause race issue that the thread is end before this calling.
+            and segmentation fault error happens. Force as a fatal error handle*/
+            pthread_kill(btinit_ctrl.worker_thread, SIGRTMIN);
+        }
     }
+    btinit_ctrl.worker_thread_running = FALSE;
+    btinit_ctrl.worker_thread = 0;
+
     if (SIG_ERR == signal(SIGRTMIN, SIG_DFL)) {
         LOG_ERR("Restore signal handler fails errno(%d)\n", errno);
     }

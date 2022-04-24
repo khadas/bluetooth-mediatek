@@ -86,6 +86,9 @@ static int btmtk_tx_pkt(struct btmtk_private *priv, struct sk_buff *skb)
 		return -EINVAL;
 	}
 
+	if (priv->hci_snoop_save)
+		priv->hci_snoop_save(bt_cb(skb)->pkt_type, skb->data, skb->len);
+
 	sdio_header_len = skb->len + BTM_HEADER_LEN;
 	memset(txbuf, 0, MTK_TXDATA_SIZE);
 	txbuf[0] = (sdio_header_len & 0x0000ff);
@@ -197,7 +200,7 @@ static int btmtk_service_main_thread(void *data)
 		if ((adapter->wakeup_tries ||
 				((!adapter->int_count) &&
 				(!priv->btmtk_dev.tx_dnld_rdy ||
-				skb_queue_empty(&adapter->tx_queue)))) && (!priv->btmtk_dev.reset_dongle)) {
+				skb_queue_empty(&adapter->tx_queue)))) && (!atomic_read(&priv->btmtk_dev.reset_dongle))) {
 			pr_debug("%s main_thread is sleeping...\n", __func__);
 			schedule();
 		}
@@ -211,10 +214,10 @@ static int btmtk_service_main_thread(void *data)
 			break;
 		}
 
-		if (priv->btmtk_dev.reset_dongle)
+		if (atomic_read(&priv->btmtk_dev.reset_dongle))
 			priv->hw_sdio_reset_dongle();
 
-		if (priv->btmtk_dev.reset_progress)
+		if (atomic_read(&priv->btmtk_dev.reset_progress))
 			continue;
 
 		ret = priv->hw_set_own_back(DRIVER_OWN);
@@ -317,6 +320,8 @@ struct btmtk_private *btmtk_add_card(void *card)
 
 	priv->btmtk_dev.card = card;
 	priv->btmtk_dev.tx_dnld_rdy = true;
+	atomic_set(&priv->btmtk_dev.reset_dongle, BTMTK_RESET_DONE);
+	atomic_set(&priv->btmtk_dev.reset_progress, BTMTK_RESET_DONE);
 
 	return priv;
 

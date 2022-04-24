@@ -67,7 +67,7 @@ int *ppicus_optind;
 #endif
 
 //---------------------------------------------------------------------------
-#define VERSION     "6.0.20050701"
+#define VERSION     "6.0.20071601"
 #define LOG_VERSION 0x100
 #define FWLOG_DEV   "/dev/stpbtfwlog"
 
@@ -183,6 +183,7 @@ int main(int argc, char *argv[])
     char Dhci_buffer[HCI_MAX_EVENT_SIZE] = {0};
     int Dhci_event_number = 0;
     unsigned short set_bperf = 0;
+    uint8_t coredump_end = 0;
     int send_enable_fwlog = 1;
 #ifdef OS_FRTOS
     int second_part_len = 0;
@@ -484,8 +485,21 @@ int main(int argc, char *argv[])
                 || strncmp(osi_get_dirent_name(p_file), ".", 1) == 0) {
                 continue;
             }
-            /* Remove the old log */
+            /* Remove the old picus log */
             if (strstr(osi_get_dirent_name(p_file), DUMP_PICUS_NAME_EXT) != NULL) {
+                memset(temp_picus_zero_filename, 0, sizeof(temp_picus_zero_filename));
+                snprintf(temp_picus_zero_filename, sizeof(temp_picus_zero_filename), "%s", osi_get_dirent_name(p_file));
+                memset(picus_fullname, 0, sizeof(picus_fullname));
+                snprintf(picus_fullname, sizeof(picus_fullname), "%s/%s", log_path, temp_picus_zero_filename);
+                if (osi_remove(picus_fullname)) {
+                    DBGPRINT(SHOW, "The old log:%s can't remove", temp_picus_zero_filename);
+                } else {
+                    DBGPRINT(SHOW, "The old log:%s remove", temp_picus_zero_filename);
+                }
+            }
+            /* Remove the old fw_dump log */
+            if (strstr(osi_get_dirent_name(p_file), FW_DUMP_PICUS_NAME_PREFIX) != NULL) {
+                memset(temp_picus_zero_filename, 0, sizeof(temp_picus_zero_filename));
                 snprintf(temp_picus_zero_filename, sizeof(temp_picus_zero_filename), "%s", osi_get_dirent_name(p_file));
                 memset(picus_fullname, 0, sizeof(picus_fullname));
                 snprintf(picus_fullname, sizeof(picus_fullname), "%s/%s", log_path, temp_picus_zero_filename);
@@ -503,9 +517,6 @@ int main(int argc, char *argv[])
     osi_time(&local_timestamp);
     osi_strftime(timestamp_buffer, 24, "%Y%m%d%H%M%S", osi_localtime(&local_timestamp));
     snprintf(dump_file_name, sizeof(dump_file_name), "%s/" DUMP_PICUS_NAME_PREFIX "%s_%d" DUMP_PICUS_NAME_EXT, log_path, timestamp_buffer, dump_name_index);
-
-    /* combine file path and file name */
-    snprintf(fw_dump_file_name, sizeof(fw_dump_file_name), "%s/" FW_DUMP_PICUS_NAME, log_path);
 
     /* dump file for picus log */
     if ((fscript = osi_fopen(dump_file_name, "wb")) == NULL) {
@@ -773,6 +784,11 @@ int main(int argc, char *argv[])
             } else if (buffer[0] == 0x6F && buffer[1] == 0xFC) {
                 /* dump file for fw dump */
                 if (fw_dump_fscript == NULL) {
+                    osi_time(&local_timestamp);
+                    osi_strftime(timestamp_buffer, 24, "%Y%m%d%H%M%S", osi_localtime(&local_timestamp));
+                    /* combine file path and file name */
+                    snprintf(fw_dump_file_name, sizeof(fw_dump_file_name), "%s/" FW_DUMP_PICUS_NAME_PREFIX "%s", log_path, timestamp_buffer);
+
                     while(1) {
                         if ((fw_dump_fscript = osi_fopen(fw_dump_file_name, "wb")) == NULL) {
                             DBGPRINT(ERROR, "Open script file %s fail [%s] errno %d", fw_dump_file_name,
@@ -792,10 +808,16 @@ int main(int argc, char *argv[])
                     buffer[nRead - 5] == 'e' &&
                     buffer[nRead - 4] == 'n' &&
                     buffer[nRead - 3] == 'd') {
+                    coredump_end = 1;
                     DBGPRINT(SHOW, "FW dump end");
                 }
                 osi_fwrite(&buffer[4], 1, fw_dump_writetofilelength, fw_dump_fscript);
                 osi_fflush(fw_dump_fscript);
+                if (coredump_end) {
+                    osi_fclose(fw_dump_fscript);
+                    fw_dump_fscript = NULL;
+                    coredump_end = 0;
+                }
             } else if (buffer[4] == 0x61 && buffer[5] == 0xFC) {
                 int rssi = (int)(buffer[9]);
                 if (rssi) {
@@ -940,6 +962,8 @@ done:
     if (fw_dump_fscript) {
         DBGPRINT(SHOW, "release %s", fw_dump_file_name);
         osi_fclose(fw_dump_fscript);
+        fw_dump_fscript = NULL;
+        coredump_end = 0;
     }
 
     return 0;

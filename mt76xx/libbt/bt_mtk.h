@@ -100,7 +100,6 @@ void clean_callbacks(void);
 int init_uart(void);
 void close_uart(void);
 int mtk_fw_cfg(uint8_t *bdaddr);
-int mtk_sco_cfg(void);
 int mtk_prepare_off(void);
 void clean_resource(void);
 

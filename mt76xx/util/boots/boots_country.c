@@ -297,7 +297,7 @@ static pkt_list_s *mtk_boots_country_set_limit(char *cmd[], size_t len, int inde
         }
     }
 
-    i = sprintf(str_buf, "%03d|%01d|%01d|%01d|0\n", country_code, bt_pwr, ble_pwr, max_pwr);
+    i = snprintf(str_buf, sizeof(str_buf), "%03d|%01d|%01d|%01d|0\n", country_code, bt_pwr, ble_pwr, max_pwr);
     str_buf[12] = '\0';
     memcpy(&wbuf[w_size], str_buf, i);
     w_size += i;
@@ -657,7 +657,7 @@ static pkt_list_s *mtk_boots_country_set_srs(char *cmd[], size_t len, int index)
             return NULL;
         }
     }
-    i = sprintf(str_buf, "%03d|%d\n", country_code, srs);
+    i = snprintf(str_buf, sizeof(str_buf), "%03d|%d\n", country_code, srs);
     memcpy(&wbuf[w_size], str_buf, i);
     w_size += i;
     fp = fopen(path_cp, "w");

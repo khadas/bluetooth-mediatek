@@ -18,6 +18,10 @@ ifeq ($(KERNEL_OUT),)
 KERNEL_OUT := $(PRODUCT_OUT)/obj/KERNEL_OBJ
 endif
 
+ifeq ($(LINUX_KERNEL_VERSION), 5.4)
+export TARGET_BUILD_KERNEL_5_4=true
+endif
+
 LOCAL_MODULE := $(BT_DRIVER_MODULE_NAME)
 LOCAL_MODULE_TAGS := optional
 LOCAL_ADDITIONAL_DEPENDENCIES := $(btsdio_module_target)

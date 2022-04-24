@@ -593,8 +593,10 @@ size_t boots_pkt_handler_parse(uint8_t *buf, size_t len, pkt_list_s **pList)
             ret = 0;
         } else if (buf[1] == 0xE4 && buf[2] == 0x1E
                 && efuse_reg_wr.wr_flag == WR_FLAG_WRITE) {
-            *pList = boots_efuse_write(list, &buf[9]);
-            if (*pList) ret = 1;
+            if (pList) {
+                *pList = boots_efuse_write(list, &buf[9]);
+                if (*pList) ret = 1;
+            }
         } else if (buf[1] == 0x4F && buf[2] == 0x50 && buf[3] == 0xCC) {
             boots_pkt_parsing(buf, len);    // Parsing
             ret = 1;

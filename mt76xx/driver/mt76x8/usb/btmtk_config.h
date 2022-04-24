@@ -94,6 +94,6 @@ static struct usb_device_id btmtk_usb_table[] = {
 /**
  * HCI records for coredump situation
  */
-#define HCI_SNOOP_ENTRY_NUM	15
+#define HCI_SNOOP_ENTRY_NUM	30
 
 #endif /* __BTMTK_CONFIG_H__ */

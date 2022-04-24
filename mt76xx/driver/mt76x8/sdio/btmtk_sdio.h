@@ -19,7 +19,7 @@
 #endif
 #include <linux/mmc/card.h>
 
-#define VERSION "v0.0.1.00_2019111401"
+#define VERSION "v0.0.1.00_2021111201"
 
 #define SDIO_HEADER_LEN                 4
 
@@ -72,6 +72,10 @@
 #define FIRMWARE_READY                          0xfedc
 #define CFG_THREE_IN_ONE_FIRMWARE               0
 
+#define BTMTK_RESET_DOING 1
+#define BTMTK_RESET_DONE 0
+
+
 
 #if CFG_THREE_IN_ONE_FIRMWARE
 #define BUILD_SIGN(ch0, ch1, ch2, ch3) \
@@ -96,6 +100,15 @@ struct _FIRMWARE_HEADER_T {
 	struct _FW_SECTION_T arSection[];
 };
 #endif
+
+enum bt_sdio_dongle_state {
+	BT_SDIO_DONGLE_STATE_UNKNOWN,
+	BT_SDIO_DONGLE_STATE_POWER_ON,
+	BT_SDIO_DONGLE_STATE_POWER_OFF,
+	BT_SDIO_DONGLE_STATE_WOBLE,
+	BT_SDIO_DONGLE_STATE_FW_DUMP,
+	BT_SDIO_DONGLE_STATE_ERROR
+};
 
 struct btmtk_sdio_card_reg {
 	u8 cfg;
@@ -184,7 +197,10 @@ struct btmtk_sdio_card {
 	unsigned int wobt_irq;
 	int wobt_irqlevel;
 	atomic_t irq_enable_count;
+	struct input_dev *WoBLEInputDev;
 #endif
+
+	enum	     bt_sdio_dongle_state dongle_state;
 };
 struct btmtk_sdio_device {
 	const char *helper;
@@ -264,6 +280,12 @@ struct _PATCH_HEADER {
  */
 #define HCI_MAX_COMMAND_BUF_SIZE	(HCI_MAX_COMMAND_SIZE * 3)
 
+/* whole chip rst ready flag */
+#define COREDUMP_START 0x00
+#define COREDUMP_END 0x01
+#define NOTIFY_WLAN_REMOVE_START 0x02
+
+
 /*
  * data event:
  * return
@@ -314,15 +336,15 @@ enum {
 };
 
 enum {
-	HW_ERR_NONE = 0,
-	HW_ERR_CODE_CHIP_RESET,
-	HW_ERR_CODE_LEGACY_WOBLE,
-	HW_ERR_CODE_CARD_DISC,
-	HW_ERR_CODE_CORE_DUMP,
-	HW_ERR_CODE_POWER_ON,
-	HW_ERR_CODE_POWER_OFF,
-	HW_ERR_CODE_WOBLE,
-	HW_ERR_CODE_SET_SLEEP_CMD,
+	HW_ERR_NONE = 0x00,
+	HW_ERR_CODE_CHIP_RESET = 0xF0,
+	HW_ERR_CODE_LEGACY_WOBLE = 0xF1,
+	HW_ERR_CODE_CARD_DISC = 0xF2,
+	HW_ERR_CODE_CORE_DUMP = 0xF3,
+	HW_ERR_CODE_POWER_ON = 0xF4,
+	HW_ERR_CODE_POWER_OFF = 0xF5,
+	HW_ERR_CODE_WOBLE = 0xF6,
+	HW_ERR_CODE_SET_SLEEP_CMD = 0xF7,
 };
 
 /**

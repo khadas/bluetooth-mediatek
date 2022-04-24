@@ -63,7 +63,7 @@
 #define DEFAULT_PATH "/data/misc/bluedroid"
 #define DUMP_PICUS_NAME_PREFIX "dump_"
 #define DUMP_PICUS_NAME_EXT ".picus"
-#define FW_DUMP_PICUS_NAME "fw_dump"
+#define FW_DUMP_PICUS_NAME_PREFIX "fw_dump_"
 
 
 #define RETRY_COUNT         20

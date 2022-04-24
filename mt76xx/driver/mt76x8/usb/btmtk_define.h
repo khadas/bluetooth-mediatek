@@ -53,6 +53,10 @@ extern u8 btmtk_log_lvl;
 #define BTUSB_DBG(fmt, ...)	 \
 	do { if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_DEBUG) pr_warn_ratelimited("[btmtk_debug] "fmt"\n", ##__VA_ARGS__); } while (0)
 
+#define BTUSB_WARN_LIMITTED(fmt, ...)     \
+        do {printk_ratelimited(KERN_WARNING     \
+            "[btusb_warm_limit] "fmt"\n", ##__VA_ARGS__); } while (0)
+
 #define BTUSB_INFO_RAW(p, l, fmt, ...)							\
 		do {									\
 			if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_INFO) {			\
@@ -99,6 +103,11 @@ extern u8 btmtk_log_lvl;
 #define RESET_BT_DONE	"RESET_BT_DONE\n"	/* Return this if reset successful in 5 sec */
 #define RESET_BT_TIMO	"RESET_BT_TIMO\n"	/* Return this if reset failed in 5 sec */
 #define RESET_TIMO	8			/* Timeout/seconds */
+
+/**
+ *Moniter FW dump
+ */
+#define FW_DUMP_TIMO	20		/* Timeout/seconds */
 
 /**
  * SYS control

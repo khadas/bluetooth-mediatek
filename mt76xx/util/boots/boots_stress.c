@@ -10,6 +10,7 @@
 
 #include "boots.h"
 #include "boots_stress.h"
+#include "boots_common.h"
 
 //---------------------------------------------------------------------------
 #define LOG_TAG "boots_stress"
@@ -313,7 +314,7 @@ static void *boots_stress_thread_main(void *arg)
     UNUSED(arg);
 
     boots_stress_thread_status = BOOTS_STRESS_THREAD_STATE_THREAD_RUNNING;
-    usleep(1000000);
+    (void)usleep(1000000);
     while (!boots_stress_thread_should_stop) {
         time_begin = boots_stress_get_timestamp();
 
@@ -331,7 +332,7 @@ static void *boots_stress_thread_main(void *arg)
         boots_stress_mem_reset_analysis();
         time_end = boots_stress_get_timestamp();
         if ((1000000 - (time_end - time_begin)) > 0)
-            usleep(1000000 - (time_end - time_begin));
+            (void)usleep(1000000 - (time_end - time_begin));
     }
     boots_stress_thread_should_stop = 0;
     boots_stress_thread_status = BOOTS_STRESS_THREAD_STATE_THREAD_STOPPED;
@@ -387,10 +388,10 @@ static void *boots_stress_thread_main(void *arg)
 
 #if BOOTS_STRESS_MEASURE_IN_BOOTS
     BPRINT_I("    Measured Process  : boots");
-    system("killall boots_srv > /dev/null");
+    boots_system("killall boots_srv > /dev/null");
 #else
     BPRINT_I("    Measured Process  : boots_srv");
-    system("killall boots > /dev/null");
+    boots_system("killall boots > /dev/null");
 #endif
     exit(0);
     return 0;

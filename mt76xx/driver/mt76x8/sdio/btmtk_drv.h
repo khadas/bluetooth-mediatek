@@ -73,8 +73,8 @@ struct btmtk_device {
 	/* struct hci_dev *hcidev; */
 
 	u8 dev_type;
-	u8 reset_progress;
-	u8 reset_dongle;
+	atomic_t reset_progress;
+	atomic_t reset_dongle;
 	u8 tx_dnld_rdy;
 
 	u8 psmode;
@@ -119,6 +119,7 @@ struct btmtk_private {
 	int (*hw_sdio_reset_dongle)(void);
 	int (*hw_set_own_back)(int owntype);
 	int (*hw_process_int_status)(struct btmtk_private *priv);
+	void (*hci_snoop_save)(u8 type, u8 *buf, u32 len);
 	void (*firmware_dump)(struct btmtk_private *priv);
 	spinlock_t driver_lock;         /* spinlock used by driver */
 #ifdef CONFIG_DEBUG_FS
