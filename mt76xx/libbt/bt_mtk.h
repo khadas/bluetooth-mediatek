@@ -35,8 +35,8 @@
  * any receiver's applicable license agreements with MediaTek Inc.
  */
 
-#ifndef _BT_MTK_H_
-#define _BT_MTK_H_
+#ifndef _BT_MTK_H
+#define _BT_MTK_H
 
 #include "bt_hci_bdroid.h"
 #include "bt_vendor_lib.h"
@@ -99,8 +99,8 @@ void set_callbacks(const bt_vendor_callbacks_t* p_cb);
 void clean_callbacks(void);
 int init_uart(void);
 void close_uart(void);
-int mtk_fw_cfg(uint8_t *bdaddr);
+int mtk_fw_cfg(void);
 int mtk_prepare_off(void);
 void clean_resource(void);
 
-#endif // _BT_MTK_H_
+#endif

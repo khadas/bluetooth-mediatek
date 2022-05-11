@@ -34,87 +34,121 @@
  * Software") have been modified by MediaTek Inc. All revisions are subject to
  * any receiver's applicable license agreements with MediaTek Inc.
  */
+
+#include "bt_vendor_lib.h"
+#include "bt_mtk.h"
+#include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <fcntl.h>
+#ifndef  MTK_LINUX
+#include <cutils/sockets.h>
+#endif
 
-#include "bt_vendor_lib.h"
-#include "bt_mtk.h"
-
-#define VERSION "1.9.2.amz"
+#define VERSION "1.7.2.amz"
+#define SUPPORT_BT_RECOVER 1
 
 //- Variables ---------------------------------------------------------------
-/** Save BD address from HIDL interface, if no default is "AndP7668" */
-static uint8_t bdaddr[6] = {0x41, 0x6E, 0x64, 0x50, 0x76, 0x68};
+#if SUPPORT_BT_RECOVER
+static int  bt_fd = -1;
+#endif
+static void whole_chip_reset(void);
+
+//- Private API -------------------------------------------------------------
+#if SUPPORT_BT_RECOVER
+void do_signal_kill(int signum)
+{
+    LOG_DBG("BT VENDOR DRIVER GET KILL SIGNAL\n");
+    whole_chip_reset();
+}
+#endif
 
 //- Interfaces --------------------------------------------------------------
 int mtk_bt_init(const bt_vendor_callbacks_t* p_cb, unsigned char *local_bdaddr)
 {
+    (void)local_bdaddr;
     LOG_TRC();
     LOG_DBG("ver: %s", VERSION);
-
     set_callbacks(p_cb);
-
-    // Save BD address in bdaddr
-    if (local_bdaddr)
-        memcpy(bdaddr, local_bdaddr, sizeof(bdaddr));
     return 0;
 }
 
 int mtk_bt_op(bt_vendor_opcode_t opcode, void *param)
 {
     int ret = 0;
+#if SUPPORT_BT_RECOVER
+    int oflag;
+#endif
 
-    switch(opcode) {
-    case BT_VND_OP_POWER_CTRL:
+    switch(opcode)
+    {
+      case BT_VND_OP_POWER_CTRL:
+#if SUPPORT_BT_RECOVER
+        signal(SIGIO,do_signal_kill);
+#endif
         LOG_DBG("BT_VND_OP_POWER_CTRL %d\n", *((int*)param));
         /* DO NOTHING on combo chip */
         break;
 
-    case BT_VND_OP_USERIAL_OPEN:
+      case BT_VND_OP_USERIAL_OPEN:
         LOG_DBG("BT_VND_OP_USERIAL_OPEN\n");
-        ((int *)param)[0] = init_uart();
+#if SUPPORT_BT_RECOVER
+        bt_fd = init_uart();
+        ((int*)param)[0] = bt_fd;
+        if(bt_fd >=0){
+
+            fcntl(bt_fd,F_SETOWN,getpid());
+            oflag = fcntl(bt_fd,F_GETFL);
+            fcntl(bt_fd,F_SETFL,oflag | FASYNC);
+
+            LOG_DBG("BT VENDOR start wait signal from kernel!");
+        }
+#else
+        ((int*)param)[0] = init_uart();
+#endif
         ret = 1; // CMD/EVT/ACL-In/ACL-Out via the same fd
         break;
 
-    case BT_VND_OP_USERIAL_CLOSE:
+      case BT_VND_OP_USERIAL_CLOSE:
         LOG_DBG("BT_VND_OP_USERIAL_CLOSE\n");
         close_uart();
         break;
 
-    case BT_VND_OP_FW_CFG:
+      case BT_VND_OP_FW_CFG:
         LOG_DBG("BT_VND_OP_FW_CFG\n");
-        ret = mtk_fw_cfg(bdaddr);
+        ret = mtk_fw_cfg();
         break;
 
-    case BT_VND_OP_SCO_CFG:
+      case BT_VND_OP_SCO_CFG:
         LOG_DBG("BT_VND_OP_SCO_CFG\n");
         /* Do NOTHING on combo chip */
         break;
 
-    case BT_VND_OP_GET_LPM_IDLE_TIMEOUT:
+      case BT_VND_OP_GET_LPM_IDLE_TIMEOUT:
         LOG_DBG("BT_VND_OP_GET_LPM_IDLE_TIMEOUT\n");
         *((uint32_t*)param) = 5000; //ms
         break;
 
-    case BT_VND_OP_LPM_SET_MODE:
+      case BT_VND_OP_LPM_SET_MODE:
         LOG_DBG("BT_VND_OP_LPM_SET_MODE %d\n", *((uint8_t*)param));
         break;
 
-    case BT_VND_OP_LPM_WAKE_SET_STATE:
+      case BT_VND_OP_LPM_WAKE_SET_STATE:
         break;
 
-    case BT_VND_OP_EPILOG:
+      case BT_VND_OP_EPILOG:
         LOG_DBG("BT_VND_OP_EPILOG\n");
         ret = mtk_prepare_off();
         break;
 
-    default:
+      default:
         LOG_DBG("Unknown operation %d\n", opcode);
         break;
     }
+
     return ret;
 }
 
@@ -132,3 +166,13 @@ const bt_vendor_interface_t BLUETOOTH_VENDOR_LIB_INTERFACE = {
     mtk_bt_op,
     mtk_bt_cleanup,
 };
+
+static void whole_chip_reset(void)
+{
+    LOG_DBG("whole_chip_reset Restarting BT process\n");
+    usleep(10000); /* 10 milliseconds */
+    /* Killing the process to force a restart as part of fault tolerance */
+    kill(getpid(), SIGKILL);
+}
+
+//---------------------------------------------------------------------------

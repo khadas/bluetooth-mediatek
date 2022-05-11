@@ -35,8 +35,8 @@
  * any receiver's applicable license agreements with MediaTek Inc.
  */
 
-#ifndef _OS_DEP_H_
-#define _OS_DEP_H_
+#ifndef _OS_DEP_H
+#define _OS_DEP_H
 
 #include <errno.h>
 #include <unistd.h>
@@ -74,10 +74,28 @@ typedef void* PVOID;
 #undef  LOG_TAG
 #endif
 #define LOG_TAG               "[BT]"
+
+#if defined(MTK_LINUX)
+#include <syslog.h>
+#define LOGWRAPPER(tag, fmt, args...) \
+    syslog(LOG_WARNING, "%s:" fmt "\n",tag, ## args)
+
+#define BT_DRIVER_DEBUG       1
+#define LOG_ERROR(...)        LOGWRAPPER(LOG_TAG,__VA_ARGS__)
+#define LOG_WAN(...)          LOGWRAPPER(LOG_TAG,__VA_ARGS__)
+#if BT_DRIVER_DEBUG
+#define LOG_DBG(...)          LOGWRAPPER(LOG_TAG,__VA_ARGS__)
+#define LOG_TRC(f)            ((void)0)
+#else
+#define LOG_DBG(...)          ((void)0)
+#define LOG_TRC(f)            ((void)0)
+#endif
+
+#else /* MTK_LINUX */
 #include <cutils/log.h>
 
 #define BT_DRIVER_DEBUG       1
-#define LOG_ERR(f, ...)       ALOGE("%s: " f, __FUNCTION__, ##__VA_ARGS__)
+#define LOG_ERROR(f, ...)     ALOGE("%s: " f, __FUNCTION__, ##__VA_ARGS__)
 #define LOG_WAN(f, ...)       ALOGW("%s: " f, __FUNCTION__, ##__VA_ARGS__)
 #if BT_DRIVER_DEBUG
 #define LOG_DBG(f, ...)       ALOGD("%s: " f,  __FUNCTION__, ##__VA_ARGS__)
@@ -86,4 +104,5 @@ typedef void* PVOID;
 #define LOG_DBG(...)          ((void)0)
 #define LOG_TRC(f)            ((void)0)
 #endif
-#endif // _OS_DEP_H_
+#endif /* MTK_LINUX */
+#endif

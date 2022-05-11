@@ -39,9 +39,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
-#include <cutils/properties.h>
-
 #include "bt_mtk.h"
+#ifndef  MTK_LINUX
+#include <cutils/properties.h>
+#endif
 
 /**************************************************************************
  *                  G L O B A L   V A R I A B L E S                       *
@@ -69,6 +70,16 @@ extern VOID BT_Cleanup(VOID);
 /**************************************************************************
  *                          F U N C T I O N S                             *
 ***************************************************************************/
+
+static BOOL is_memzero(unsigned char *buf, int size)
+{
+    int i;
+    for (i = 0; i < size; i++) {
+        if (*(buf+i) != 0) return FALSE;
+    }
+    return TRUE;
+}
+
 /* Register callback functions to libbt-hci.so */
 void set_callbacks(const bt_vendor_callbacks_t *p_cb)
 {
@@ -94,7 +105,7 @@ int init_uart(void)
     while(1) {
         bt_fd = open("/dev/stpbt", O_RDWR | O_NOCTTY | O_NONBLOCK);
         if (bt_fd < 0) {
-            LOG_ERR("Can't open serial port, Retry\n");
+            LOG_ERROR("Can't open serial port, Retry\n");
             usleep(200000);/*200ms*/
             if (retry <= 0)
                 break;
@@ -105,7 +116,7 @@ int init_uart(void)
     }
 
     if (bt_fd < 0) {
-        LOG_ERR("Can't open serial port!!!");
+        LOG_ERROR("Can't open serial port\n");
         return -1;
     }
 
@@ -119,6 +130,9 @@ void close_uart(void)
     bt_fd = -1;
 }
 
+#ifdef MTK_LINUX
+/* This function no need in 7663 Linux-base project */
+#else
 static int bt_get_combo_id(unsigned int *pChipId)
 {
     int  chipId_ready_retry = 0;
@@ -146,121 +160,20 @@ static int bt_get_combo_id(unsigned int *pChipId)
         return 0;
     }
 }
-
-/** callback function for xmit_cb() */
-static VOID xmit_complete_cb(VOID *p_evt)
-{
-#define HCE_COMMAND_COMPLETE 0x0E
-    HC_BT_HDR *p_buf = (HC_BT_HDR *)p_evt;
-    uint8_t event = 0;
-    uint8_t len = 0;
-    uint16_t opcode = 0;
-    uint8_t status = 0;
-
-    if (p_buf == NULL) {
-        LOG_ERR("Incorrect parameter - p_evt!!!");
-        return;
-    }
-
-    LOG_TRC();
-    if (p_buf->data[0] != HCE_COMMAND_COMPLETE) {
-        int i = 0;
-
-        for (i = 0; i < p_buf->len; i++)
-            LOG_WAN("p_buf[%d] = %02X", i, p_buf->data[i]);
-        return;
-    }
-
-    // Expect this is command complete event
-    event = p_buf->data[0];
-    len = p_buf->data[1];
-    opcode = *(uint16_t *)&p_buf->data[3];
-    status = p_buf->data[5];
-    LOG_DBG("Command_Complete OPCode: %04X, LEN: %02X, Status: %02X",
-            opcode, len, status);
-    return;
-}
-
-/** Set Bluetooth local address */
-static bool bd_set_local_bdaddr(uint8_t *addr)
-{
-#define OPCODE_LEN 2
-#define PARAM_SIZE_LEN 1
-#define BD_ADDR_LEN 6
-    uint16_t opcode = HCI_SET_BD_ADDRESS_OP_CODE;
-    HC_BT_HDR *p_buf = NULL;
-    uint8_t *p = NULL;
-    int i = 0;
-
-    if (bt_vnd_cbacks == NULL) {
-        LOG_ERR("No HIDL interface callbacks!!!");
-        return false;
-    }
-    if (addr == NULL) {
-        LOG_ERR("No BD address!!!");
-        return false;
-    }
-    LOG_TRC();
-
-    p_buf = (HC_BT_HDR *)bt_vnd_cbacks->alloc(BT_HC_HDR_SIZE + OPCODE_LEN
-            + PARAM_SIZE_LEN + BD_ADDR_LEN);
-    if (p_buf == NULL) {
-        LOG_ERR("Allocation fail!!!");
-        return false;
-    }
-
-    p_buf->event = MSG_STACK_TO_HC_HCI_CMD;
-    p_buf->len = OPCODE_LEN + PARAM_SIZE_LEN + BD_ADDR_LEN;
-    p_buf->offset = 0;
-    p_buf->layer_specific = 0;
-
-    p = (uint8_t *)(p_buf + 1);
-    memcpy(p, &opcode, OPCODE_LEN); // opcode
-    p += 2;
-    *p++ = 6; // len
-
-/**
- * The "string_to_bytes()" from HIDL HAL actually reverted
- * the byte ordering in the output "addr" array, so we need
- * to revert it back!
- */
-
-    *p++ = addr[5];
-    *p++ = addr[4];
-    *p++ = addr[3];
-    *p++ = addr[2];
-    *p++ = addr[1];
-    *p++ = addr[0];
-
-    LOG_DBG("CMD: %02X %02X %02X %02X %02X %02X %02X %02X : %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-            *(uint8_t *)p_buf, *(((uint8_t *)p_buf) + 1),           // event
-            *(((uint8_t *)p_buf) + 2), *(((uint8_t *)p_buf) + 3),   // len
-            *(((uint8_t *)p_buf) + 4), *(((uint8_t *)p_buf) + 5),   // offset
-            *(((uint8_t *)p_buf) + 6), *(((uint8_t *)p_buf) + 7),   // layer_specific
-            // following are data
-            *(((uint8_t *)p_buf) + 8), *(((uint8_t *)p_buf) + 9), *(((uint8_t *)p_buf) + 10),
-            *(((uint8_t *)p_buf) + 11), *(((uint8_t *)p_buf) + 12), *(((uint8_t *)p_buf) + 13),
-            *(((uint8_t *)p_buf) + 14), *(((uint8_t *)p_buf) + 15), *(((uint8_t *)p_buf) + 16));
-
-    bt_vnd_cbacks->xmit_cb(opcode, p_buf, xmit_complete_cb);
-    // p_buf will free by xmit_cb.
-    return true;
-}
+#endif
 
 /* MTK specific chip initialize process */
-int mtk_fw_cfg(uint8_t *bdaddr)
+int mtk_fw_cfg(void)
 {
     unsigned int chipId = 0x7662;
     unsigned char ucNvRamData[64] = {0};
-    unsigned int speed = 0, flow_control = 0;
+    unsigned int speed, flow_control;
     SETUP_UART_PARAM_T uart_setup_callback = NULL;
 
     LOG_TRC();
-    // Write local address to controller, that get from BT init function
-    bd_set_local_bdaddr(bdaddr);
 
-    LOG_WAN("[BDAddr %02x-%02x-%02x-%02x-%02x-%02x][Voice %02x %02x][Codec %02x %02x %02x %02x]\n\
-            [Radio %02x %02x %02x %02x %02x %02x][Sleep %02x %02x %02x %02x %02x %02x %02x][BtFTR %02x %02x]\n\
+    LOG_WAN("[BDAddr %02x-%02x-%02x-%02x-%02x-%02x][Voice %02x %02x][Codec %02x %02x %02x %02x] \
+            [Radio %02x %02x %02x %02x %02x %02x][Sleep %02x %02x %02x %02x %02x %02x %02x][BtFTR %02x %02x] \
             [TxPWOffset %02x %02x %02x][CoexAdjust %02x %02x %02x %02x %02x %02x]\n",
             ucNvRamData[0], ucNvRamData[1], ucNvRamData[2], ucNvRamData[3], ucNvRamData[4], ucNvRamData[5],
             ucNvRamData[6], ucNvRamData[7],
@@ -270,6 +183,7 @@ int mtk_fw_cfg(uint8_t *bdaddr)
             ucNvRamData[25], ucNvRamData[26],
             ucNvRamData[27], ucNvRamData[28], ucNvRamData[29],
             ucNvRamData[30], ucNvRamData[31], ucNvRamData[32], ucNvRamData[33], ucNvRamData[34], ucNvRamData[35]);
+
 
     return (BT_InitDevice(
               chipId,

@@ -99,4 +99,4 @@ int mtk_bt_write(int bt_fd, unsigned char *buffer, unsigned short length);
 int mtk_bt_read(int bt_fd, unsigned char *buffer, unsigned short length);
 void mtk_bt_op(BT_REQ req, BT_RESULT *result);
 
-#endif // __BT_DRV_IF_H__
+#endif

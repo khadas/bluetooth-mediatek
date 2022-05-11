@@ -81,7 +81,7 @@ BOOL BT_InitDevice(
     btinit->host_uart_cback = setup_uart_param;
 
     if (SIG_ERR == signal(SIGRTMIN, thread_exit)) {
-        LOG_ERR("Register signal handler fails errno(%d)\n", errno);
+        LOG_ERROR("Register signal handler fails errno(%d)\n", errno);
     }
 
     pthread_attr_t attr;
@@ -89,7 +89,7 @@ BOOL BT_InitDevice(
     i4_ret = pthread_attr_init(&attr);
     if (0 != i4_ret)
     {
-        LOG_ERR("thread attr init fail\n");
+        LOG_ERROR("thread attr init fail\n");
         return FALSE;
     }
 
@@ -97,13 +97,13 @@ BOOL BT_InitDevice(
     if (0 != i4_ret)
     {
         pthread_attr_destroy(&attr);
-        LOG_ERR("thread pthread_attr_setdetachstate fail\n");
+        LOG_ERROR("thread pthread_attr_setdetachstate fail\n");
         return FALSE;
     }
     if (pthread_create(&btinit_ctrl.worker_thread, &attr, \
           GORM_FW_Init_Thread, NULL) != 0) {
         pthread_attr_destroy(&attr);
-        LOG_ERR("Create FW init thread fails\n");
+        LOG_ERROR("Create FW init thread fails\n");
         return FALSE;
     }
     else {
@@ -135,7 +135,7 @@ VOID BT_Cleanup(VOID)
                 btinit_ctrl.worker_thread, retry*300);
         }
         if (retry >= 10) {
-            LOG_ERR("BT_Cleanup() Fatal Error!!! worker thread 0x%x is not end normally.\n", \
+            LOG_ERROR("BT_Cleanup() Fatal Error!!! worker thread 0x%x is not end normally.\n", \
                 btinit_ctrl.worker_thread);
             /*pthread_kill cause race issue that the thread is end before this calling.
             and segmentation fault error happens. Force as a fatal error handle*/
@@ -146,7 +146,7 @@ VOID BT_Cleanup(VOID)
     btinit_ctrl.worker_thread = 0;
 
     if (SIG_ERR == signal(SIGRTMIN, SIG_DFL)) {
-        LOG_ERR("Restore signal handler fails errno(%d)\n", errno);
+        LOG_ERROR("Restore signal handler fails errno(%d)\n", errno);
     }
     return;
 }
